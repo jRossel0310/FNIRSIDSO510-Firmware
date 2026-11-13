@@ -1,6 +1,7 @@
 // FNIRSI DSO-510 board definitions (AT32F403A/407). See NOTES.md for how each was derived.
 #pragma once
 #include <stdint.h>
+#include "keys.h"
 
 #define REG32(a) (*(volatile uint32_t *)(a))
 #define REG16(a) (*(volatile uint16_t *)(a))
@@ -13,6 +14,13 @@
 #define CRM_APB2EN   REG32(0x40021018)
 #define CRM_APB1EN   REG32(0x4002101C)
 #define CRM_MISC1    REG32(0x40021030)
+
+#define CRM_MISC3    REG32(0x40021054)
+#define SYST_CSR     REG32(0xE000E010)
+#define SYST_RVR     REG32(0xE000E014)
+#define SYST_CVR     REG32(0xE000E018)
+#define NVIC_ICER(i) REG32(0xE000E180 + 4 * (i))
+#define NVIC_ICPR(i) REG32(0xE000E280 + 4 * (i))
 
 #define IOMUX_REMAP2 REG32(0x40010030)
 #define WDT_CMD      REG32(0x40003000)
@@ -56,25 +64,14 @@
 // Front-panel keys: active low, pull-up. Order = stock key-scan table @ 0x080349F8.
 // short code = index + 1; long-press codes: K1=10 K2=11 K5=12 K6=13 K8=14.
 // Physical mapping confirmed on hardware 2026-11-13.
-#define NUM_KEYS 9
-enum {
-    KEY_POWER = 0,   // K1 PD2
-    KEY_RUN,         // K2 PC9  Run/Stop
-    KEY_UP,          // K3 PC7
-    KEY_DOWN,        // K4 PC8
-    KEY_MODE,        // K5 PC6
-    KEY_AUTO,        // K6 PD13
-    KEY_WHEEL_R,     // K7 PB15 thumb wheel pushed right
-    KEY_WHEEL_PRESS, // K8 PB14 thumb wheel pressed in
-    KEY_WHEEL_L,     // K9 PB13 thumb wheel pushed left
-};
-#define KEY_BIT(k) (1u << (k))
 typedef struct { uint32_t port; uint8_t pin; char name[5]; } key_def_t;
 extern const key_def_t board_keys[NUM_KEYS];
 
-void board_init(void);           // clocks (8 MHz HICK), power latch, VTOR, interrupts off
+extern uint32_t SystemCoreClock;
+void board_init(void);           // 240 MHz, SysTick 1 ms, IRQs from bootloader off, power latch
+uint32_t millis(void);
+void delay_ms(uint32_t ms);      // SysTick based, reloads watchdog
 void gpio_mode(uint32_t port, unsigned pin, uint32_t cfg);
-void delay_ms(uint32_t ms);
 void keys_init(void);
 uint32_t keys_read(void);        // bit i set = key i pressed
 void backlight(int on);
