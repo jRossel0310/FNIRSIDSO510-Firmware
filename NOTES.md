@@ -74,8 +74,16 @@ Display:
 - **Backlight = PA2, TMR9 CH1 PWM, 1 kHz** (ARR 99), duty = brightness setting (byte @ 0x200003B5); 0 on shutdown.
 
 Power / misc GPIO:
-- **PD3 = power latch** (set high first thing in init) — very likely; confirmed if hello app stays on.
-- PD2 polled at boot (button). PA8 read alongside battery measurement (charger status?).
+- **PD3 = power latch — CONFIRMED** (keytest: driving PD3 low turns the scope off).
+  Note: hello app had no power-off → had to unplug the battery. Every app must implement power-off.
+- Keys (active low, pull-up; stock scan FUN_0802EF00, tables @ 0x080349E4/ED/F8, 0x08034A1C),
+  physical mapping confirmed with keytest:
+  K1 PD2 Power · K2 PC9 Run/Stop · K3 PC7 Up · K4 PC8 Down · K5 PC6 Mode · K6 PD13 Auto ·
+  K7 PB15 wheel right · K8 PB14 wheel press · K9 PB13 wheel left.
+  Long-press codes: K1=10 (power off) K2=11 K5=12 K6=13 K8=14 (70 scan ticks).
+- Battery: V = raw × 3.3/4095 × 2 (½ divider on PC3). Stock % thresholds: ≥4.06 V 100, 3.98 90, 3.92 80,
+  3.87 70, 3.82 60, then 3.79/3.77/3.74/3.68. Keytest read raw 2763 (= 4.45 V, likely with USB charging).
+- Power-on: with battery connected, USB alone only charges (green charger LED); press K1 to boot. PA8 read alongside battery measurement (charger status?).
 - PA3 = TMR9 CH2 1 kHz 50 % — probe-compensation/cal square wave?
 - PB9 = TMR11 CH1 2 kHz PWM, duty toggled → **buzzer**.
 - PA7 = TMR14 CH1 12-bit PWM (ARR 0xFFE), updated often → front-end offset / trigger level DAC.
