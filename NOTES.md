@@ -84,7 +84,7 @@ Power / misc GPIO:
 - Battery: V = raw × 3.3/4095 × 2 (½ divider on PC3). Stock % thresholds: ≥4.06 V 100, 3.98 90, 3.92 80,
   3.87 70, 3.82 60, then 3.79/3.77/3.74/3.68. Keytest read raw 2763 (= 4.45 V, likely with USB charging).
 - Power-on: with battery connected, USB alone only charges (green charger LED); press K1 to boot. PA8 read alongside battery measurement (charger status?).
-- PA3 = TMR9 CH2 1 kHz 50 % — probe-compensation/cal square wave?
+- **PA3 = cal pad — CONFIRMED** (TMR9 CH2 1 kHz 50 % square, seen on probe).
 - PB9 = TMR11 CH1 2 kHz PWM, duty toggled → **buzzer**.
 - PA7 = TMR14 CH1 12-bit PWM (ARR 0xFFE), updated often → front-end offset / trigger level DAC.
 - USART1 TX on PA9 @ 1.5 Mbaud (debug console? something on the board?).
@@ -92,7 +92,11 @@ Power / misc GPIO:
 
 Other:
 - ADC1 ch13 (PC3) single conversion → **battery voltage** (FUN_08009408). PA8 = charge/power sense?
-- **DAC** (+ TMR6 / TMR4) = DDS signal generator output (FUN_0800AF00, FUN_0801B80C, FUN_0801B8DC).
+- **Generator = DAC1 / PA4 — CONFIRMED** (1 kHz sine seen on probe). Stock: TMR6 TRGO triggers DAC1,
+  DMA2 ch3 (flex req 0x05) streams 100-point table (RAM @ 0x200002EA) circular; f = TMR6 rate / 100.
+- DAC2 / PA5 held at 0xF46 (~3.15 V) by stock init — purpose unknown (bias?).
+- **ADC capture CONFIRMED** (scopetest): TMR4 CH3 PWM on PB8 = ADC clock, DMA1 ch7 (flex req 0x4F) on TMR4
+  overflow reads GPIOB->IDT; trace tracks PA7 offset PWM; cal square + generator sine visible.
 - **SPI3** = external SPI NOR flash driver (FUN_0802D944) → FatFs volumes 2: and 3:.
 - **USBD** (USB FS device, IRQ20) = MSC drive mode.
 - Internal flash unlock (KEY 0x45670123) present → settings/calibration stored in internal flash?
