@@ -24,3 +24,5 @@ int adc_capture(uint8_t *buf, uint16_t n, const samplerate_t *sr);
 void cal_out_init(void);       // PA3 = TMR9 CH2, 1 kHz 50 % square (calibration pad, presumed)
 void dac2_bias_init(void);     // PA5 = DAC2 static 0xF46 (stock init; purpose unknown)
 void gen_sine_1k_init(void);   // PA4 = DAC1, TMR6-triggered DMA2 ch3 from 100-point table -> 1 kHz sine
+// Change generator frequency: f = 8 MHz / (arr + 1) / 100.
+void gen_set_arr(uint16_t arr);

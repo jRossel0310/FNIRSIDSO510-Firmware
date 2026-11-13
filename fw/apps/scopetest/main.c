@@ -20,6 +20,15 @@ static uint8_t *const cap = cap_raw + CAP_SKIP;
 
 static int range = 5, rate = 3, coupling = 0, frozen = 0;
 static uint32_t glitches, glitch_frames, notrig;
+
+// Generator frequencies: f = 8 MHz / (arr+1) / 100. "Odd" ones are not integer divisors of the
+// sample rates, so the sine drifts relative to the sample clock (tests the trigger properly).
+static const struct { uint16_t arr; const char *label; } gen_freqs[] = {
+    {799, "100Hz"}, {239, "333Hz"}, {79, "1kHz"}, {59, "1.33kHz"},
+    {15, "5kHz"},  {10, "7.27kHz"}, {7, "10kHz"}, {3, "20kHz"},
+};
+#define NUM_GEN (int)(sizeof gen_freqs / sizeof gen_freqs[0])
+static int gen = 2;
 static uint16_t offset = FE_OFFSET_DEFAULT;
 
 static void draw_status(void) {
@@ -34,6 +43,9 @@ static void draw_status(void) {
     c = lcd_text(c, 0, " PC5=", C_GRAY, C_BLACK);
     c = lcd_text(c, 0, coupling ? "1" : "0", C_WHITE, C_BLACK);
     lcd_text(c, 0, frozen ? " H" : "  ", C_RED, C_BLACK);
+    c = lcd_text(0, 14, " GEN sine ", C_GRAY, C_BLACK);
+    c = lcd_text(c, 14, gen_freqs[gen].label, C_CYAN, C_BLACK);
+    lcd_text(c, 14, "  (wheel-press)          ", C_GRAY, C_BLACK);
 }
 
 static inline uint16_t bg_px(int x, int y) {
@@ -58,7 +70,6 @@ int main(void) {
     for (int x = 0; x < PLOT_W; x++) draw_col(x, -1, -1);
     lcd_fill(PLOT_X - 1, PLOT_Y - 1, PLOT_W + 2, 1, C_GRAY);
     lcd_fill(PLOT_X - 1, PLOT_Y + PLOT_H, PLOT_W + 2, 1, C_GRAY);
-    lcd_text(0, 14, " </>range ^v offset RUN rate MODE pc5", C_GRAY, C_BLACK);
     backlight(1);
 
     fe_init();
@@ -88,6 +99,11 @@ int main(void) {
         if (press & KEY_BIT(KEY_RUN))  { rate = (rate + 1) % num_sample_rates; changed = 1; }
         if (press & KEY_BIT(KEY_MODE)) { coupling ^= 1; changed = 1; }
         if (press & KEY_BIT(KEY_AUTO)) { frozen ^= 1; changed = 1; }
+        if (press & KEY_BIT(KEY_WHEEL_PRESS)) {
+            gen = (gen + 1) % NUM_GEN;
+            gen_set_arr(gen_freqs[gen].arr);
+            changed = 1;
+        }
         if (k & KEY_BIT(KEY_POWER)) {   // hold ~2-3 s (time-based, independent of capture speed)
             int t = 0;
             while (keys_read() & KEY_BIT(KEY_POWER)) {

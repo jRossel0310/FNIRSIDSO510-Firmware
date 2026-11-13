@@ -197,3 +197,8 @@ void gen_sine_1k_init(void) {
     TMR_SWEVT(TMR6_BASE) = 1;
     TMR_CTRL1(TMR6_BASE) |= 1;
 }
+
+void gen_set_arr(uint16_t arr) {
+    TMR_PR(TMR6_BASE) = arr;
+    TMR_SWEVT(TMR6_BASE) = 1;
+}
