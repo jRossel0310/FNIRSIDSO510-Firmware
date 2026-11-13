@@ -19,3 +19,8 @@ void adc_init(void);
 // Blocking single-shot capture of n bytes at the given rate (TMR4 clocks ADC + paces DMA1 ch7).
 // Returns 0 on success, -1 on timeout.
 int adc_capture(uint8_t *buf, uint16_t n, const samplerate_t *sr);
+
+// ---- Outputs (all as configured by stock firmware) ----
+void cal_out_init(void);       // PA3 = TMR9 CH2, 1 kHz 50 % square (calibration pad, presumed)
+void dac2_bias_init(void);     // PA5 = DAC2 static 0xF46 (stock init; purpose unknown)
+void gen_sine_1k_init(void);   // PA4 = DAC1, TMR6-triggered DMA2 ch3 from 100-point table -> 1 kHz sine

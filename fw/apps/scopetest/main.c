@@ -52,6 +52,7 @@ int main(void) {
     for (int x = 0; x < PLOT_W; x++) draw_col(x, -1, -1);
     lcd_fill(PLOT_X - 1, PLOT_Y - 1, PLOT_W + 2, 1, C_GRAY);
     lcd_fill(PLOT_X - 1, PLOT_Y + PLOT_H, PLOT_W + 2, 1, C_GRAY);
+    lcd_text(0, 13, " CAL pad: 1kHz square  GEN: 1kHz sine ", C_CYAN, C_BLACK);
     lcd_text(0, 14, " </>range ^v offset RUN rate MODE pc5", C_GRAY, C_BLACK);
     backlight(1);
 
@@ -60,6 +61,9 @@ int main(void) {
     fe_set_coupling(coupling);
     fe_set_offset(offset);
     adc_init();
+    dac2_bias_init();
+    cal_out_init();
+    gen_sine_1k_init();
     draw_status();
 
     uint32_t prev_keys = 0, held = 0;
