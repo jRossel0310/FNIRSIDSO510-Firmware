@@ -162,3 +162,12 @@ Other:
   `fe_settle_ms()` (diagnostic photos: auto-set debug overlay, `make EXTRA=-DAUTOSET_DEBUG`).
 - Generator test sine sits on ~+1.6 V DC (0.44–2.72 V at 1 kHz).
 - Cal pad reads ~3.0–3.1 Vpp with nominal gain (pad amplitude not yet checked with a meter).
+
+
+## SPI NOR flash (flashprobe, 2026-11-13, photo docs/storage.jpg)
+- SPI3 remap IOMUX_REMAP5[27:24]=3 -> SCK PC10, MISO PC11, MOSI PC12; CS PD12; mode 0 @ 15 MHz works.
+- JEDEC ID 0x856017: Puya (0x85), type 0x60, 2^0x17 = **8 MiB**.
+- Two FAT12 volumes, no partition table, OEM "MSDOS5.0", 4096 B/sector, 1 sector/cluster, 1 reserved:
+  - 0x000000: 0x500 sectors = **5 MiB user volume** (stock `2:`, the USB drive)
+  - 0x500000: 0x300 sectors = **3 MiB hidden system volume** (stock `3:`, UI graphics) — must never be written
+    by our firmware, so recovery to stock keeps working.
