@@ -126,3 +126,30 @@ Other:
   10 kHz, 20 kHz (incl. frequencies not synchronous with the sample clock).
 - Factory calibration/settings page: internal flash 0x08006000 (written by stock FUN_0801B218).
   Never write it.
+
+## Factory calibration page (caldump, 2026-11-13)
+
+`parse: VALID factory data` (photo `docs/words.jpg`). Words 0x00..0x26 at 0x08006000:
+
+```
+00: 00060055 0B000100 01000100 00000000
+04: 1E320C01 000003E8 00056402 00050105
+08: 05E805E7 05ED05ED 05E805ED 05F105EE
+0C: 05F205F2 05EB05E8 05ED05EC 05E805EE
+10: 05F005EF 05F305F1 05EC05E8 05EC05EC
+14: 05E805EE 05F105EE 05F205F2 09F209F4
+18: 09F409F3 09EE09F4 09F609F4 09F809F8
+1C: 09F209EE 09F409F3 09EE09F3 09F709F4
+20: 09F709F8 09F009EE 09F209F2 09EC09F2
+24: 09F509F1 09F509F6 09F50995
+```
+
+- Marker 0x55 (saved by stock). All offset-PWM `lo` ≈ 0x5E7–0x5F3, all `hi` ≈ 0x9EE–0x9F8 (hi > lo:
+  larger PWM moves the trace up). Span ≈ 0x406 PWM counts for the ±100-code offset range.
+- Page survived every IAP flash so far (bootloader only rewrites ≥ 0x08007000).
+
+## Hardware checks for sub-project 1 (2026-11-13)
+
+- faulttest: uptime counts 1/s (240 MHz + SysTick OK); RUN → HARD FAULT screen, PC 0x0800722E = the
+  `udf` in main, CFSR 0x00010000 (UNDEFINSTR), HFSR 0x40000000 (FORCED) (photo `docs/hwfaultimg.jpg`);
+  Power switches off. `tools/flash.sh` works.
