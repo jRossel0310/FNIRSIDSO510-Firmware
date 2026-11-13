@@ -24,9 +24,11 @@ static keys_state_t ks;
 static rate_cfg_t rc;
 static uint32_t sps;          /* samples per screen */
 static int rec_n, armed;
-static uint32_t toast_until, armed_at, next_batt;
+static uint32_t toast_until, armed_at, next_batt, settle_until;
+#define FE_SETTLE_MS 40       /* range relays / PA7 offset PWM filter */
 static int have_trace;        /* spans[] / last_meas hold a drawn trace */
 static meas_t last_meas;
+static int8_t trace_vdiv; static uint8_t trace_x10;   /* scale last_meas was taken at */
 static meas_avg_t meas_avg;
 static uint8_t zeroed, zero_failed;
 #define UNCAL() (!cal.valid && !zeroed)
@@ -55,6 +57,8 @@ static void apply_time(void) {
     set_time(st.tdiv);
     apply_fe();
 }
+
+static void fe_settle(void) { delay_ms(FE_SETTLE_MS); }
 
 /* Expected capture time plus 1 s margin. */
 static uint32_t capture_timeout_ms(void) { return (uint32_t)((uint64_t)rec_n * 1000u / rc.rate_hz) + 1000u; }
@@ -87,12 +91,12 @@ static void process_capture(void) {
     else if (st.trig_mode == TRIG_AUTO) start = 0;
     else return;                                    /* Normal/Single: keep previous trace */
     if (st.trig_mode == TRIG_SINGLE) { st.run = 0; draw_bars(); }
-    render_spans(rec, rec_n, start, (sps << 8) / PLOT_W, spans, PLOT_W);
+    render_spans(rec, rec_n, start, ((sps << 8) + PLOT_W / 2) / PLOT_W, spans, PLOT_W);
     ui_draw_trace(spans);
     meas_t raw;
     measure(rec + start, (int)sps, rc.rate_hz, &raw);
     meas_avg_update(&meas_avg, &raw, &last_meas);
-    have_trace = 1;
+    have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10;
     ui_draw_meas(&st, &last_meas);
 }
 
@@ -111,25 +115,27 @@ static void do_autoset(void) {
     st.offset = 0; st.trig_mode = TRIG_AUTO; st.trig_pos = PLOT_W / 2; st.run = 1;
     st.tdiv = TDIV_1MS;
     apply_time();
-    for (int it = 0; it < 8; it++) {
+    fe_settle();
+    for (int it = 0; it < AUTOSET_MAX_ITER; it++) {
         CAP();
         int mn, mx; minmax(&mn, &mx);
         int v = st.vdiv, o = st.offset;
         int again = autoset_fit(&v, &o, mn, mx);
         st.vdiv = (int8_t)v; st.offset = (int16_t)o;
         apply_fe();
+        fe_settle();
         if (!again) break;
-        delay_ms(30);                           /* let range relays / offset PWM settle */
     }
     meas_t m;
     CAP();
     measure(rec, rec_n, rc.rate_hz, &m);
     if (m.valid && m.freq_hz > 20000.0f) {
-        st.tdiv = TDIV_10US; apply_time(); CAP();
+        st.tdiv = TDIV_10US; apply_time(); fe_settle(); CAP();
         measure(rec, rec_n, rc.rate_hz, &m);
     }
     if (m.valid) { int nt = autoset_tdiv(m.freq_hz); if (nt >= 0) st.tdiv = (int8_t)nt; }
     apply_time();
+    fe_settle();
     CAP();
     int mn, mx; minmax(&mn, &mx);
     st.trig_level = (int16_t)((mn + mx) / 2);
@@ -138,11 +144,27 @@ static void do_autoset(void) {
     redraw_all();
 }
 
+static void power_down(void);
+static uint32_t pwr_since;
+
+/* Called from long blocking operations: hold Power ~1 s to switch off. */
+static void poll_power(void) {
+    if (keys_read() & KEY_BIT(KEY_POWER)) {
+        if (!pwr_since) pwr_since = millis() | 1u;
+        else if (millis() - pwr_since >= 1000) power_down();
+    } else pwr_since = 0;
+}
+
+static void wait_power_aware(uint32_t ms) {
+    for (uint32_t t0 = millis(); millis() - t0 < ms; ) { WDT_CMD = 0xAAAA; poll_power(); }
+}
+
 static int mean_at_pwm(uint16_t pwm, void *ctx) {
     (void)ctx;
     if (zero_failed) return ADC_CENTER;
     fe_set_offset_pwm(pwm);
-    delay_ms(40);                               /* let the PA7 PWM filter settle */
+    wait_power_aware(FE_SETTLE_MS);             /* let the PA7 PWM filter settle */
+    poll_power();
     if (capture_blocking() < 0) { zero_failed = 1; return ADC_CENTER; }
     uint32_t sum = 0;
     for (int i = 0; i < rec_n; i++) sum += rec[i];
@@ -155,8 +177,9 @@ static void do_autozero(void) {
     };
     toast(" ZERO: short! ", 60000);
     adc_abort(); armed = 0;
-    delay_ms(2000);
+    wait_power_aware(2000);
     zero_failed = 0;
+    cal_t tmp = cal;                            /* shifts are committed only if every range succeeds */
     for (int p = 0; p < 2; p++) {
         set_time(plan[p].tdiv);
         for (int r = 0; r < NUM_VDIV; r++) {
@@ -164,16 +187,17 @@ static void do_autozero(void) {
             ui_toast(" ZERO range   ");
             lcd_text(31, 0, fmt_u(b, (uint32_t)r, 1), C_BLACK, C_YELLOW);
             fe_set_range(r);
-            uint16_t pw = cal_search_pwm(mean_at_pwm, 0, ADC_CENTER, cal.lo[plan[p].set][r], cal.hi[plan[p].set][r]);
+            uint16_t pw = cal_search_pwm(mean_at_pwm, 0, ADC_CENTER, tmp.lo[plan[p].set][r], tmp.hi[plan[p].set][r]);
             if (zero_failed) {
                 apply_time();
                 redraw_all();
                 toast(" ZERO failed  ", 3000);
                 return;
             }
-            cal_shift_zero(&cal, plan[p].set, r, pw);
+            cal_shift_zero(&tmp, plan[p].set, r, pw);
         }
     }
+    cal = tmp;
     zeroed = 1;
     apply_time();
     redraw_all();
@@ -212,8 +236,11 @@ int main(void) {
         for (int i = 0; i < ne; i++) chg |= control_handle(&st, ev[i]);
 
         if (chg & ACT_POWEROFF) power_down();
-        if (chg & CHG_TIME) { adc_abort(); armed = 0; apply_time(); }
-        if (chg & CHG_FE) { adc_abort(); armed = 0; apply_fe(); }
+        if (chg & CHG_TIME) { adc_abort(); armed = 0; apply_time(); have_trace = 0; settle_until = millis() + FE_SETTLE_MS; }
+        if (chg & CHG_FE) {
+            adc_abort(); armed = 0; apply_fe(); settle_until = millis() + FE_SETTLE_MS;
+            if (st.vdiv != trace_vdiv || st.probe_x10 != trace_x10) have_trace = 0;   /* held Vpp would be mis-scaled */
+        }
         if (chg & CHG_RUN) { adc_abort(); armed = 0; }
         if (chg & CHG_SCREEN) redraw_all();
         else {
@@ -226,7 +253,11 @@ int main(void) {
         if (chg & ACT_AUTOZERO) do_autozero();
 
         if (st.run && !st.menu_open) {
-            if (!armed) { adc_start(rec, (uint16_t)rec_n); armed = 1; armed_at = millis(); }
+            if (!armed) {
+                if ((int32_t)(millis() - settle_until) >= 0) {   /* not while the front end settles */
+                    adc_start(rec, (uint16_t)rec_n); armed = 1; armed_at = millis();
+                }
+            }
             else if (adc_done()) { armed = 0; process_capture(); }
             else if (millis() - armed_at > capture_timeout_ms()) {
                 adc_abort(); armed = 0; toast(" ADC timeout  ", 2000);
@@ -236,8 +267,11 @@ int main(void) {
         uint32_t now = millis();
         if ((int32_t)(now - next_batt) >= 0) {
             next_batt = now + 2000;
-            float v = (float)batt_adc_read() * 3.3f / 4095.0f * 2.0f;
-            ui_draw_batt(units_batt_pct(v));
+            uint16_t raw = batt_adc_read();
+            if (raw != 0xFFFF) {                    /* 0xFFFF = ADC timeout: keep the old reading */
+                float v = (float)raw * 3.3f / 4095.0f * 2.0f;
+                ui_draw_batt(units_batt_pct(v));
+            }
         }
         if (toast_until && (int32_t)(now - toast_until) >= 0) {
             toast_until = 0; ui_toast_clear(); draw_bars();   /* restore the mode label under it */

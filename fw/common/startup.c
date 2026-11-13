@@ -5,6 +5,7 @@ extern uint32_t _estack, _sidata, _sdata, _edata, _sbss, _ebss;
 int main(void);
 
 void Reset_Handler(void) {
+    __asm volatile ("cpsid i");                       /* VTOR may still be the bootloader's: no IRQs during init */
     *(volatile uint32_t *)0xE000ED88 |= 0xFu << 20;   /* CPACR: enable FPU (CP10, CP11) */
     __asm volatile ("dsb\n isb");
     uint32_t *src = &_sidata, *dst = &_sdata;

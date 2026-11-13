@@ -13,6 +13,8 @@
 static void cmd(uint8_t c) { LCD_CMD = c; }
 static void dat(uint8_t d) { LCD_DATA = d; }
 
+volatile int lcd_ready;
+
 void lcd_init(void) {
     static const uint8_t pd_xmc[] = {0, 1, 4, 5, 7, 8, 9, 10, 11, 14, 15};
     IOMUX_REMAP2 |= 0x08000000;
@@ -25,6 +27,7 @@ void lcd_init(void) {
     XMC_BK1TMGWR1 = 0x202;
     XMC_EXT1 = (XMC_EXT1 & 0xFFFF0000u) | 8;
     XMC_BK1CTRL1 |= 1;
+    lcd_ready = 1;                                  /* bus enabled: LCD accesses no longer fault */
 
     GPIO_SCR(LCD_RST_PORT) = 1u << LCD_RST_PIN; delay_ms(10);
     GPIO_CLR(LCD_RST_PORT) = 1u << LCD_RST_PIN; delay_ms(20);

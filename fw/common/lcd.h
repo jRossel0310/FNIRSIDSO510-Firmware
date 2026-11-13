@@ -14,6 +14,7 @@
 #define C_CYAN   RGB565(0, 220, 255)
 #define C_NAVY   RGB565(16, 16, 48)
 
+extern volatile int lcd_ready;   // set once lcd_init has enabled the XMC bus (HardFault screen checks it)
 void lcd_init(void);
 // Raw access: set a window, then push w*h pixels row-major.
 void lcd_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);

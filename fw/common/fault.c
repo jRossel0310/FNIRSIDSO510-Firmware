@@ -4,6 +4,12 @@
 
 void hardfault_report(uint32_t *frame) {
     char b[12];
+    if (!lcd_ready) {                       /* fault before lcd_init: LCD access would fault again */
+        for (;;) {
+            WDT_CMD = 0xAAAA;
+            if (keys_read() & KEY_BIT(KEY_POWER)) power_off();
+        }
+    }
     backlight(1);
     lcd_fill(0, 0, LCD_W, LCD_H, C_RED);
     lcd_text(1, 1, "HARD FAULT", C_WHITE, C_RED);

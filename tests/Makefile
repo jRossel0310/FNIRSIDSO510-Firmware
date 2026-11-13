@@ -13,4 +13,6 @@ build/tests: $(SRCS) $(HDRS)
 clean:
 	rm -rf build
 
-.PHONY: run clean
+test: run
+
+.PHONY: run test clean

@@ -57,6 +57,7 @@ void board_init(void) {
     __asm volatile ("cpsid i");
     SYST_CSR = 0;
     for (int i = 0; i < 8; i++) { NVIC_ICER(i) = 0xFFFFFFFFu; NVIC_ICPR(i) = 0xFFFFFFFFu; }
+    REG32(0xE000ED04) = (1u << 27) | (1u << 25);          // ICSR: clear pending PendSV and SysTick
     SCB_VTOR = 0x08007000;
     clock_init_240mhz();
     SYST_RVR = SystemCoreClock / 1000 - 1;

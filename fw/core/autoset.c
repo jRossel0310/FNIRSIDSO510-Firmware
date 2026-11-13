@@ -10,14 +10,14 @@ int autoset_fit(int *vdiv, int *offset, int vmin, int vmax) {
     int v = *vdiv, off = *offset;
     int top = vmax >= 253, bot = vmin <= 2;
     if (top || bot) {
-        if (top && !bot && off > -100) off = clampi(off - 50, -100, 100);
-        else if (bot && !top && off < 100) off = clampi(off + 50, -100, 100);
-        else if (v < NUM_VDIV - 1) v++;
-        else return 0;
-        *vdiv = v; *offset = off;
+        /* Clipped: the capture says nothing reliable about the signal. Jump well towards the
+           least sensitive range with the offset centred; the next (unclipped) capture then
+           lets the fit below pick the range/offset in one step. */
+        if (v >= NUM_VDIV - 1 && off == 0) return 0;     /* nothing less sensitive left */
+        v = v + AUTOSET_CLIP_JUMP < NUM_VDIV - 1 ? v + AUTOSET_CLIP_JUMP : NUM_VDIV - 1;
+        *vdiv = v; *offset = 0;
         return 1;
     }
-    if (vmax - vmin < 2) return 0;                      /* flat: nothing to scale on */
     /* Signal extents in units of mV*CODES_PER_DIV (exact integers). */
     int32_t hi = (int32_t)(vmax - ADC_CENTER - off) * vdiv_mv[v];
     int32_t lo = (int32_t)(vmin - ADC_CENTER - off) * vdiv_mv[v];

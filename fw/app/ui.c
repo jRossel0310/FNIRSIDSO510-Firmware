@@ -35,17 +35,20 @@ void ui_draw_trace(const span_t *sp) {
     }
 }
 
+/* Top row of a 3-row marker centred on y, kept inside the PLOT_H rows that get erased. */
+static int marker_y0(int y) { y = y > 1 ? y - 1 : 0; return y > PLOT_H - 3 ? PLOT_H - 3 : y; }
+
 void ui_draw_markers(const scope_state_t *s) {
     /* 0 V baseline: left margin */
     lcd_fill(0, PLOT_Y, PLOT_X - 1, PLOT_H, C_BLACK);
     int y = code_to_y(ADC_CENTER + s->offset);
-    lcd_fill(0, PLOT_Y + (y > 1 ? y - 1 : 0), PLOT_X - 2, 3, C_YELLOW);
+    lcd_fill(0, PLOT_Y + marker_y0(y), PLOT_X - 2, 3, C_YELLOW);
     /* trigger level: right margin */
     lcd_fill(PLOT_X + PLOT_W + 1, PLOT_Y, LCD_W - PLOT_X - PLOT_W - 1, PLOT_H, C_BLACK);
     y = code_to_y(s->trig_level);
-    lcd_fill(PLOT_X + PLOT_W + 2, PLOT_Y + (y > 1 ? y - 1 : 0), 7, 3, C_CYAN);
+    lcd_fill(PLOT_X + PLOT_W + 2, PLOT_Y + marker_y0(y), 7, 3, C_CYAN);
     /* trigger position: strip above the plot */
-    lcd_fill(PLOT_X, 16, PLOT_W, 4, C_BLACK);
+    lcd_fill(PLOT_X, 16, PLOT_W + 2, 4, C_BLACK);   /* marker at trig_pos 299 reaches x = PLOT_W + 1 */
     int x = s->trig_pos - 2 < 0 ? 0 : s->trig_pos - 2;
     lcd_fill(PLOT_X + x, 16, 5, 4, C_ORANGE);
 }

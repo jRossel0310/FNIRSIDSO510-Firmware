@@ -40,4 +40,16 @@ void test_keys(void) {
     CHECK_EQ(n, 1); CHECK_EQ(ev[0].type, KEV_REPEAT);
     feed(&s, 0, 3600, ev);
     CHECK_EQ(feed(&s, 0, 3625, ev), 0);                    /* no event on release */
+
+    /* held repeat key after a long stall (blocking auto-set): one REPEAT, not a burst */
+    {
+        keys_state_t r; kev_t e[8];
+        keys_reset(&r, KEY_BIT(KEY_UP));
+        feed(&r, KEY_BIT(KEY_UP), 0, e); feed(&r, KEY_BIT(KEY_UP), 25, e);
+        int total = 0;
+        total += feed(&r, KEY_BIT(KEY_UP), 20000, e);
+        for (int i = 0; i < 4; i++) total += feed(&r, KEY_BIT(KEY_UP), 20001 + i, e);
+        CHECK_EQ(total, 1);
+        CHECK_EQ(feed(&r, KEY_BIT(KEY_UP), 20000 + 80, e), 1);   /* normal cadence resumes */
+    }
 }
