@@ -15,6 +15,13 @@
 #define CRM_APB1EN   REG32(0x4002101C)
 #define CRM_MISC1    REG32(0x40021030)
 
+#define CRM_MISC3    REG32(0x40021054)
+#define SYST_CSR     REG32(0xE000E010)
+#define SYST_RVR     REG32(0xE000E014)
+#define SYST_CVR     REG32(0xE000E018)
+#define NVIC_ICER(i) REG32(0xE000E180 + 4 * (i))
+#define NVIC_ICPR(i) REG32(0xE000E280 + 4 * (i))
+
 #define IOMUX_REMAP2 REG32(0x40010030)
 #define WDT_CMD      REG32(0x40003000)
 #define SCB_VTOR     REG32(0xE000ED08)
@@ -60,9 +67,11 @@
 typedef struct { uint32_t port; uint8_t pin; char name[5]; } key_def_t;
 extern const key_def_t board_keys[NUM_KEYS];
 
-void board_init(void);           // clocks (8 MHz HICK), power latch, VTOR, interrupts off
+extern uint32_t SystemCoreClock;
+void board_init(void);           // 240 MHz, SysTick 1 ms, IRQs from bootloader off, power latch
+uint32_t millis(void);
+void delay_ms(uint32_t ms);      // SysTick based, reloads watchdog
 void gpio_mode(uint32_t port, unsigned pin, uint32_t cfg);
-void delay_ms(uint32_t ms);
 void keys_init(void);
 uint32_t keys_read(void);        // bit i set = key i pressed
 void backlight(int on);

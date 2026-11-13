@@ -11,16 +11,19 @@ void gpio_mode(uint32_t port, unsigned pin, uint32_t cfg) {
     *r = (*r & ~(0xFu << sh)) | (cfg << sh);
 }
 
+uint32_t SystemCoreClock = 8000000;
+static volatile uint32_t g_ms;
+
+void SysTick_Handler(void) { g_ms++; }
+uint32_t millis(void) { return g_ms; }
+
 void delay_ms(uint32_t ms) {
-    // Busy loop at 8 MHz HICK. Unmeasured; may run up to ~2x long (fine for init timing).
-    while (ms--) {
-        for (volatile uint32_t i = 0; i < 2000; i++) { }
-        WDT_CMD = 0xAAAA;   // reload watchdog in case the bootloader started it
-    }
+    uint32_t t0 = g_ms;
+    while (g_ms - t0 < ms) WDT_CMD = 0xAAAA;   // reload watchdog in case the bootloader started it
 }
 
-static void clock_reset_to_hick(void) {
-    // Mirrors stock SystemInit: run from 8 MHz HICK, PLL off.
+static void clock_init_240mhz(void) {
+    // Back to HICK first (mirrors stock SystemInit), then PLL = HEXT 8 MHz / 2 * 60 = 240 MHz.
     CRM_CTRL |= 1;
     while (!(CRM_CTRL & 2)) { }
     CRM_CFG &= ~3u;
@@ -29,12 +32,37 @@ static void clock_reset_to_hick(void) {
     CRM_CFG = 0;
     CRM_MISC1 = 0;
     CRM_CLKINT = 0x009F0000;
+
+    CRM_CTRL |= 1u << 16;                                 // HEXTEN
+    while (!(CRM_CTRL & (1u << 17))) { }                  // HEXTSTBL
+    CRM_CFG |= 1u << 16;                                  // PLLRCS = HEXT
+    CRM_CFG |= 1u << 17;                                  // HEXT / 2
+    CRM_CFG = (CRM_CFG & ~(0xFu << 18)) | (0xBu << 18);   // PLLMULT[3:0]
+    CRM_CFG |= 3u << 29;                                  // PLLMULT[5:4] -> x60
+    CRM_CFG |= 1u << 31;                                  // PLL range > 72 MHz
+    CRM_MISC3 &= ~0x3000u;
+    CRM_CTRL |= 1u << 24;                                 // PLLEN
+    while (!(CRM_CTRL & (1u << 25))) { }                  // PLLSTBL
+    CRM_CFG &= ~0xF0u;                                    // AHB / 1
+    CRM_CFG = (CRM_CFG & ~(7u << 11)) | (4u << 11);       // APB2 / 2 = 120 MHz
+    CRM_CFG = (CRM_CFG & ~(7u << 8)) | (4u << 8);         // APB1 / 2 = 120 MHz
+    CRM_MISC3 |= 0x30;                                    // auto step (as stock)
+    CRM_CFG = (CRM_CFG & ~3u) | 2;                        // SCLK = PLL
+    while ((CRM_CFG & 0xC) != 8) { }
+    CRM_MISC3 &= ~0x30u;
+    SystemCoreClock = 240000000;
 }
 
 void board_init(void) {
     __asm volatile ("cpsid i");
+    SYST_CSR = 0;
+    for (int i = 0; i < 8; i++) { NVIC_ICER(i) = 0xFFFFFFFFu; NVIC_ICPR(i) = 0xFFFFFFFFu; }
     SCB_VTOR = 0x08007000;
-    clock_reset_to_hick();
+    clock_init_240mhz();
+    SYST_RVR = SystemCoreClock / 1000 - 1;
+    SYST_CVR = 0;
+    SYST_CSR = 7;                                         // HCLK, interrupt, enable
+    __asm volatile ("cpsie i");
     // IOMUX, GPIOA..E, ADC1; XMC.
     CRM_APB2EN |= (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9);
     CRM_AHBEN |= (1u << 8);
@@ -66,6 +94,7 @@ void power_off(void) {
 }
 
 void batt_adc_init(void) {
+    CRM_CFG = (CRM_CFG & ~((3u << 14) | (1u << 28))) | (2u << 14);   // ADCDIV = /6
     gpio_mode(GPIOC, 3, CFG_ANALOG);
     ADC1_SPT1 |= 7u << ((BATT_ADC_CH - 10) * 3);   // longest sample time (as stock)
     ADC1_OSQ3 = BATT_ADC_CH;                        // one conversion, channel 13
