@@ -116,3 +116,13 @@ Other:
   IAP sequence: copy → USB disconnect → re-enumerate ~1 s → app starts (USB gone, app has no USB).
 - Open case: identify AT32 part number, SPI flash, ADC, FPGA (if any), LCD controller, SWD pads
 - Check flash access protection (FAP) via SWD / Artery ROM bootloader (BOOT0 → USB DFU)
+
+## 2026-11-13 — trigger stability
+
+- 3PA1030 is pipelined; stopping its clock between captures makes the first samples of the next
+  capture stale (previous capture's data) → trigger fired at random phase (video docs/IMG_9392.mov).
+  Fix: discard first 16 samples (scopetest) / keep ADC clock running (real firmware).
+- Verified stable with generator sine at 100 Hz, 333 Hz, 1 kHz, 1.33 kHz, 5 kHz, 7.27 kHz,
+  10 kHz, 20 kHz (incl. frequencies not synchronous with the sample clock).
+- Factory calibration/settings page: internal flash 0x08006000 (written by stock FUN_0801B218).
+  Never write it.
