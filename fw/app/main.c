@@ -24,7 +24,11 @@ static keys_state_t ks;
 static rate_cfg_t rc;
 static uint32_t sps;          /* samples per screen */
 static int rec_n, armed;
-static uint32_t toast_until, armed_at;
+static uint32_t toast_until, armed_at, next_batt;
+static int have_trace;        /* spans[] / last_meas hold a drawn trace */
+static meas_t last_meas;
+static uint8_t zeroed, zero_failed;
+#define UNCAL() (!cal.valid && !zeroed)
 
 static void toast(const char *msg, uint32_t ms) { ui_toast(msg); toast_until = millis() + ms; }
 
@@ -34,12 +38,16 @@ static void apply_fe(void) {
     fe_set_offset_pwm(cal_offset_pwm(&cal, cal_set_for_rate(rc.rate_hz), st.vdiv, st.offset));
 }
 
-static void apply_time(void) {
-    rc = units_rate_for_tdiv(tdiv_ns[st.tdiv]);
+static void set_time(int tdiv) {
+    rc = units_rate_for_tdiv(tdiv_ns[tdiv]);
     adc_set_rate(rc.psc, rc.arr);
-    sps = units_samples_per_screen(rc.rate_hz, tdiv_ns[st.tdiv]);
+    sps = units_samples_per_screen(rc.rate_hz, tdiv_ns[tdiv]);
     rec_n = (int)(4 * sps);
     if (rec_n > REC_MAX) rec_n = REC_MAX;
+}
+
+static void apply_time(void) {
+    set_time(st.tdiv);
     apply_fe();
 }
 
@@ -58,8 +66,10 @@ static int capture_blocking(void) {
 
 static void redraw_all(void) {
     ui_draw_static();
-    ui_draw_bars(&st, !cal.valid);
+    ui_draw_bars(&st, UNCAL());
     ui_draw_markers(&st);
+    if (have_trace) { ui_draw_trace(spans); ui_draw_meas(&st, &last_meas); }
+    next_batt = millis();
     if (st.menu_open) ui_draw_menu(&st);
 }
 
@@ -71,18 +81,22 @@ static void process_capture(void) {
     if (t >= 0) start = t - pre;
     else if (st.trig_mode == TRIG_AUTO) start = 0;
     else return;                                    /* Normal/Single: keep previous trace */
-    if (st.trig_mode == TRIG_SINGLE) { st.run = 0; ui_draw_bars(&st, !cal.valid); }
+    if (st.trig_mode == TRIG_SINGLE) { st.run = 0; ui_draw_bars(&st, UNCAL()); }
     render_spans(rec, rec_n, start, (sps << 8) / PLOT_W, spans, PLOT_W);
     ui_draw_trace(spans);
-    meas_t m;
-    measure(rec + start, (int)sps, rc.rate_hz, &m);
-    ui_draw_meas(&st, &m);
+    measure(rec + start, (int)sps, rc.rate_hz, &last_meas);
+    have_trace = 1;
+    ui_draw_meas(&st, &last_meas);
 }
 
 static void minmax(int *mn, int *mx) {
     *mn = 255; *mx = 0;
     for (int i = 0; i < rec_n; i++) { if (rec[i] < *mn) *mn = rec[i]; if (rec[i] > *mx) *mx = rec[i]; }
 }
+
+/* On capture failure: restore a sane state and leave the timeout toast visible. */
+#define CAP() do { if (capture_blocking() < 0) { apply_time(); redraw_all(); \
+                    toast(" ADC timeout  ", 2000); return; } } while (0)
 
 static void do_autoset(void) {
     toast(" AUTO...      ", 60000);
@@ -91,53 +105,67 @@ static void do_autoset(void) {
     st.tdiv = TDIV_1MS;
     apply_time();
     for (int it = 0; it < 5; it++) {
-        capture_blocking();
+        CAP();
         int mn, mx; minmax(&mn, &mx);
         int nv = autoset_vdiv(st.vdiv, mn, mx);
         if (nv == st.vdiv) break;
         st.vdiv = (int8_t)nv; apply_fe(); delay_ms(30);
     }
     meas_t m;
-    capture_blocking();
+    CAP();
     measure(rec, rec_n, rc.rate_hz, &m);
     if (m.valid && m.freq_hz > 20000.0f) {
-        st.tdiv = TDIV_10US; apply_time(); capture_blocking();
+        st.tdiv = TDIV_10US; apply_time(); CAP();
         measure(rec, rec_n, rc.rate_hz, &m);
     }
     if (m.valid) { int nt = autoset_tdiv(m.freq_hz); if (nt >= 0) st.tdiv = (int8_t)nt; }
     apply_time();
-    capture_blocking();
+    CAP();
     int mn, mx; minmax(&mn, &mx);
     st.trig_level = (int16_t)((mn + mx) / 2);
     redraw_all();
     ui_toast_clear();
+    toast_until = 0;
 }
 
 static int mean_at_pwm(uint16_t pwm, void *ctx) {
     (void)ctx;
+    if (zero_failed) return ADC_CENTER;
     fe_set_offset_pwm(pwm);
     delay_ms(40);                               /* let the PA7 PWM filter settle */
-    capture_blocking();
+    if (capture_blocking() < 0) { zero_failed = 1; return ADC_CENTER; }
     uint32_t sum = 0;
     for (int i = 0; i < rec_n; i++) sum += rec[i];
     return (int)(sum / (uint32_t)rec_n);
 }
 
 static void do_autozero(void) {
+    static const struct { uint8_t set, tdiv; } plan[2] = {
+        { CAL_SET_SLOW, TDIV_1MS }, { CAL_SET_MID, TDIV_10US },
+    };
     toast(" ZERO: short! ", 60000);
     adc_abort(); armed = 0;
-    int set = cal_set_for_rate(rc.rate_hz), keep = st.vdiv;
-    for (int r = 0; r < NUM_VDIV; r++) {
-        char b[4];
-        ui_toast(" ZERO range   ");
-        lcd_text(31, 0, fmt_u(b, (uint32_t)r, 1), C_BLACK, C_YELLOW);
-        fe_set_range(r);
-        uint16_t p = cal_search_pwm(mean_at_pwm, 0, ADC_CENTER, cal.lo[set][r], cal.hi[set][r]);
-        cal_shift_zero(&cal, set, r, p);
+    delay_ms(2000);
+    zero_failed = 0;
+    for (int p = 0; p < 2; p++) {
+        set_time(plan[p].tdiv);
+        for (int r = 0; r < NUM_VDIV; r++) {
+            char b[4];
+            ui_toast(" ZERO range   ");
+            lcd_text(31, 0, fmt_u(b, (uint32_t)r, 1), C_BLACK, C_YELLOW);
+            fe_set_range(r);
+            uint16_t pw = cal_search_pwm(mean_at_pwm, 0, ADC_CENTER, cal.lo[plan[p].set][r], cal.hi[plan[p].set][r]);
+            if (zero_failed) {
+                apply_time();
+                redraw_all();
+                toast(" ZERO failed  ", 3000);
+                return;
+            }
+            cal_shift_zero(&cal, plan[p].set, r, pw);
+        }
     }
-    cal.valid = 1;
-    st.vdiv = (int8_t)keep;
-    apply_fe();
+    zeroed = 1;
+    apply_time();
     redraw_all();
     toast(" ZERO done    ", 2000);
 }
@@ -167,7 +195,6 @@ int main(void) {
     backlight(1);
     if (!cal.valid) toast(" no factory cal", 3000);
 
-    uint32_t next_batt = 0;
     for (;;) {
         kev_t ev[8];
         int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
@@ -180,7 +207,7 @@ int main(void) {
         if (chg & CHG_RUN) { adc_abort(); armed = 0; }
         if (chg & CHG_SCREEN) redraw_all();
         else {
-            if (chg & CHG_BARS) ui_draw_bars(&st, !cal.valid);
+            if (chg & CHG_BARS) ui_draw_bars(&st, UNCAL());
             if (chg & (CHG_TRIG | CHG_FE)) ui_draw_markers(&st);
             if ((chg & CHG_MENU) && st.menu_open) ui_draw_menu(&st);
         }
