@@ -9,9 +9,14 @@
 #define PLOT_Y 32
 #define PLOT_W 300
 #define PLOT_H 176
-#define CAP_N  (PLOT_W * 2)
+// The 3PA1030 is pipelined and its clock stops between captures, so the first samples of a
+// capture are stale conversions from the end of the previous one. Discard them.
+#define CAP_SKIP 16
+#define CAP_N  (PLOT_W * 2 + CAP_SKIP)
 
-static uint8_t cap[CAP_N];
+static uint8_t cap_raw[CAP_N];
+static uint8_t *const cap = cap_raw + CAP_SKIP;
+#define CAP_USE (CAP_N - CAP_SKIP)
 
 static int range = 5, rate = 3, coupling = 0, frozen = 0;
 static uint32_t glitches, glitch_frames, notrig;
@@ -97,18 +102,18 @@ int main(void) {
         if (frozen) { delay_ms(20); continue; }
 
         // ---- capture ----
-        if (adc_capture(cap, CAP_N, &sample_rates[rate]) != 0) {
+        if (adc_capture(cap_raw, CAP_N, &sample_rates[rate]) != 0) {
             lcd_text(0, 1, " capture timeout (DMA never finished)  ", C_BLACK, C_RED);
             delay_ms(200);
             continue;
         }
         uint32_t sum = 0; uint8_t mn = 255, mx = 0;
-        for (int i = 0; i < CAP_N; i++) { sum += cap[i]; if (cap[i] < mn) mn = cap[i]; if (cap[i] > mx) mx = cap[i]; }
+        for (int i = 0; i < CAP_USE; i++) { sum += cap[i]; if (cap[i] < mn) mn = cap[i]; if (cap[i] > mx) mx = cap[i]; }
 
         // Software trigger with hysteresis. Level = mean (robust to a single bad sample, unlike
         // (min+max)/2). Arm once clearly below the level, fire at the first sample >= level.
         int t0 = 0, trig = 0;
-        int lvl = sum / CAP_N, hyst = (mx - mn) / 8;
+        int lvl = sum / CAP_USE, hyst = (mx - mn) / 8;
         if (mx - mn > 8) {
             int armed = 0;
             for (int i = 0; i < PLOT_W; i++) {
@@ -119,7 +124,7 @@ int main(void) {
         // Glitch detector: a sample far from both neighbours that agree with each other.
         uint32_t g = 0;
         int gthr = (mx - mn) / 3 + 6;
-        for (int i = 1; i < CAP_N - 1; i++) {
+        for (int i = 1; i < CAP_USE - 1; i++) {
             int a = cap[i - 1], b = cap[i], c2 = cap[i + 1];
             int d1 = b - a, d2 = b - c2, dn = a - c2;
             if (d1 < 0) d1 = -d1;
@@ -157,7 +162,7 @@ int main(void) {
         c = lcd_text(c, 1, " max ", C_GRAY, C_BLACK);
         c = lcd_text(c, 1, fmt_u(b, mx, 3), C_WHITE, C_BLACK);
         c = lcd_text(c, 1, " avg ", C_GRAY, C_BLACK);
-        c = lcd_text(c, 1, fmt_u(b, sum / CAP_N, 3), C_WHITE, C_BLACK);
+        c = lcd_text(c, 1, fmt_u(b, sum / CAP_USE, 3), C_WHITE, C_BLACK);
         c = lcd_text(c, 1, "  s0 0x", C_GRAY, C_BLACK);
         lcd_text(c, 1, fmt_x(b, cap[0], 2), C_WHITE, C_BLACK);
     }
