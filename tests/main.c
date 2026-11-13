@@ -8,6 +8,8 @@ void test_render(void);
 void test_keys(void);
 void test_measure(void);
 void test_cal(void);
+void test_control(void);
+void test_autoset(void);
 
 int main(void) {
     test_fmt();
@@ -17,6 +19,8 @@ int main(void) {
     test_keys();
     test_measure();
     test_cal();
+    test_control();
+    test_autoset();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }
