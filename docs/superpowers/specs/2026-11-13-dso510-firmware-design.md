@@ -99,15 +99,16 @@ Same as stock: HEXT 8 MHz / 2 × 60 = 240 MHz SYSCLK; APB1 = APB2 = 120 MHz; tim
 - Each timebase maps to a sample rate (table, like stock `FUN_0801A95C`).
 - **≤ 12 MS/s:** single stream — TMR4 CH3 PWM on PB8 clocks the ADC, TMR4 overflow requests
   DMA1 ch7 (flex request 0x4F) reading GPIOB->IDT byte-wide. Proven in `scopetest`.
-- **24 / 48 MS/s:** stock 4-way interleave — four phase-staggered timers (TMR8/5/3/1 in stock)
+- **24 / 48 MS/s (sub-project 1b, separate plan):** stock 4-way interleave — four phase-staggered timers (TMR8/5/3/1 in stock)
   pacing DMA2 ch1, DMA2 ch2, DMA1 ch3, DMA1 ch5 into four sub-buffers, re-interleaved in software.
   Exact timer phasing to be reproduced from stock `FUN_0801AD00`.
-- Below 30 samples/div (50–200 ns/div) the display connects samples with straight lines.
+- Sub-project 1 targets 120 samples/div (rate = 120 / (s/div), capped at 12 MS/s), so timebases
+  500 ns/div … 50 ms/div; below 30 samples/div the display connects samples with straight lines.
+  50–200 ns/div arrive with 1b.
 - **ADC clock runs continuously** between captures so the pipelined 3PA1030 never returns stale
   conversions (cause of the trigger-jump bug found in `scopetest`).
-- **Record:** ~4 screens of samples per capture, split pre/post trigger by the trigger-position
-  setting. Size set by available SRAM: check whether the option byte gives 224 KB (stock's stack
-  top 0x200375D0 implies it); otherwise size for 96 KB.
+- **Record:** 4 screens of samples per capture (max 4 × 1200 = 4800 bytes), split pre/post trigger
+  by the trigger-position setting. Fits easily in 96 KB SRAM, so the 224 KB option is not needed.
 - Timebases ≥ 100 ms/div are deferred to roll mode (sub-project 5); until then the slowest
   supported timebase is 50 ms/div.
 
@@ -124,17 +125,22 @@ Software trigger over the captured buffer:
 
 ### Front end and calibration
 
-- Ranges 10 mV/div … 10 V/div (10 settings) map onto the 10 stock pin states
-  (PC4, PE6, PE5, PE4 — table in `fw/common/scope.c`). Which state is which V/div is determined
-  from the stock code plus measurement against the cal pad.
+- Ranges 10 mV/div … 10 V/div (10 settings): range index r drives stock pin state r
+  (PC4, PE6, PE5, PE4) and is r in the stock mV/div table @ 0x08034A2E
+  `[10,20,50,100,200,500,1000,2000,5000,10000]`. Gain is nominal: 25 ADC codes per division,
+  0 V at code 128 + offset (offset −100…+100 codes), as in stock `FUN_08015D08` display code.
 - Coupling: PC5 (which level = AC is to be confirmed on hardware). Probe ×1/×10 is a display
   multiplier only.
 - Offset: PA7 PWM (TMR14 CH1). Stock formula (from `FUN_08008834`):
   `pwm = (hi[r] - lo[r]) / K * (user_offset + 100) + lo[r]` with per-range tables.
 - **Factory calibration** is stored by stock in internal flash page **0x08006000** (2 KB, below our
   app; the bootloader does not rewrite it). `cal` reads it **read-only**. First step: a `caldump`
-  test app shows the raw page on screen; we map its layout against stock code (`FUN_0801B218`
-  writer, tables at RAM 0x20000202–0x20000276) before using it.
+  test app shows the raw page on screen to confirm it is present. Layout (from stock writer
+  `FUN_0801B218`): word 0 low byte 0x55 (saved) / 0xAA (defaults); words 8..0x25 hold six
+  10-entry u16 tables (bytes = RAM 0x20000202..0x20000279): offset-PWM lo/hi per range for three
+  timebase classes (slow ≤ 2.4 MS/s, 12 MS/s class, interleaved). Offset PWM =
+  lo + (hi − lo) · (offset + 100) / 200 (stock `FUN_08008834`, K = 200). Factory data covers
+  offset only; gain is nominal.
 - **We never erase or write page 0x08006000.** Our own settings live on the SPI flash
   (sub-project 2); until then, settings are not persisted.
 - Fallback if the factory block is missing/invalid: zero-offset calibration via long-press Auto
@@ -162,7 +168,7 @@ Stock-like layout, 320×240:
 | Up / Down | vertical item of current control mode; menu navigation | — |
 | Run | run / stop | save CSV (sub-project 2) |
 | Auto | auto-set (V/div + timebase from signal) | zero-offset calibration |
-| Power | power off (release PD3 latch) | — |
+| Power | — | power off (release PD3 latch); long press avoids accidental shutdown |
 
 Every app build must implement power-off (lesson from `hello`).
 
