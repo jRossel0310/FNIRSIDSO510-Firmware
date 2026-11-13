@@ -11,8 +11,15 @@ void test_control(void) {
 
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_TIME | CHG_BARS);
     CHECK_EQ(s.tdiv, TDIV_1MS + 1);
-    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), CHG_FE | CHG_BARS);
+    s.trig_level = 153;                                    /* +1 div at 1 V/div = +1 V */
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), CHG_FE | CHG_BARS | CHG_TRIG);
     CHECK_EQ(s.vdiv, 5);                                   /* up = more sensitive */
+    CHECK_EQ(s.trig_level, 178);                           /* still +1 V = 2 div at 500 mV */
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), CHG_FE | CHG_BARS | CHG_TRIG);
+    CHECK_EQ(s.trig_level, 253);                           /* +1 V = 5 div at 200 mV */
+    control_handle(&s, K(KEV_SHORT, KEY_UP));
+    CHECK_EQ(s.trig_level, 255);                           /* clamped to ADC range */
+    s.trig_level = 128;
     s.vdiv = 0;
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), 0); /* clamped */
 
@@ -20,12 +27,19 @@ void test_control(void) {
     CHECK_EQ(s.ctl, CTL_POS_OFFSET);
     CHECK_EQ(control_handle(&s, K(KEV_REPEAT, KEY_UP)), CHG_FE | CHG_TRIG);
     CHECK_EQ(s.offset, 5);
+    CHECK_EQ(s.trig_level, 133);                           /* level follows the trace */
+    s.offset = 98;
+    control_handle(&s, K(KEV_SHORT, KEY_UP));
+    CHECK_EQ(s.offset, 100); CHECK_EQ(s.trig_level, 135);  /* moves by the clamped amount */
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), 0); /* at limit: nothing moves */
+    CHECK_EQ(s.trig_level, 135);
+    s.offset = 5; s.trig_level = 133;
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_L)), CHG_TRIG);
     CHECK_EQ(s.trig_pos, 140);
     control_handle(&s, K(KEV_SHORT, KEY_MODE));
     CHECK_EQ(s.ctl, CTL_POS_LEVEL);
     control_handle(&s, K(KEV_SHORT, KEY_DOWN));
-    CHECK_EQ(s.trig_level, 126);
+    CHECK_EQ(s.trig_level, 131);
     control_handle(&s, K(KEV_SHORT, KEY_MODE));
     CHECK_EQ(s.ctl, CTL_TIME_VOLT);
 

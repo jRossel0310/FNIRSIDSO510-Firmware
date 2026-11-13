@@ -27,12 +27,17 @@ static int rec_n, armed;
 static uint32_t toast_until, armed_at, next_batt;
 static int have_trace;        /* spans[] / last_meas hold a drawn trace */
 static meas_t last_meas;
+static meas_avg_t meas_avg;
 static uint8_t zeroed, zero_failed;
 #define UNCAL() (!cal.valid && !zeroed)
 
-static void toast(const char *msg, uint32_t ms) { ui_toast(msg); toast_until = millis() + ms; }
+static const char *toast_msg;
+static void toast(const char *msg, uint32_t ms) { toast_msg = msg; ui_toast(msg); toast_until = millis() + ms; }
+/* Status bars; re-show an active toast, since the mode label shares its columns. */
+static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); }
 
 static void apply_fe(void) {
+    meas_avg_reset(&meas_avg);
     fe_set_range(st.vdiv);
     fe_set_coupling_dc(st.coupling_dc);
     fe_set_offset_pwm(cal_offset_pwm(&cal, cal_set_for_rate(rc.rate_hz), st.vdiv, st.offset));
@@ -66,7 +71,7 @@ static int capture_blocking(void) {
 
 static void redraw_all(void) {
     ui_draw_static();
-    ui_draw_bars(&st, UNCAL());
+    draw_bars();
     ui_draw_markers(&st);
     if (have_trace) { ui_draw_trace(spans); ui_draw_meas(&st, &last_meas); }
     next_batt = millis();
@@ -81,10 +86,12 @@ static void process_capture(void) {
     if (t >= 0) start = t - pre;
     else if (st.trig_mode == TRIG_AUTO) start = 0;
     else return;                                    /* Normal/Single: keep previous trace */
-    if (st.trig_mode == TRIG_SINGLE) { st.run = 0; ui_draw_bars(&st, UNCAL()); }
+    if (st.trig_mode == TRIG_SINGLE) { st.run = 0; draw_bars(); }
     render_spans(rec, rec_n, start, (sps << 8) / PLOT_W, spans, PLOT_W);
     ui_draw_trace(spans);
-    measure(rec + start, (int)sps, rc.rate_hz, &last_meas);
+    meas_t raw;
+    measure(rec + start, (int)sps, rc.rate_hz, &raw);
+    meas_avg_update(&meas_avg, &raw, &last_meas);
     have_trace = 1;
     ui_draw_meas(&st, &last_meas);
 }
@@ -104,12 +111,15 @@ static void do_autoset(void) {
     st.offset = 0; st.trig_mode = TRIG_AUTO; st.trig_pos = PLOT_W / 2; st.run = 1;
     st.tdiv = TDIV_1MS;
     apply_time();
-    for (int it = 0; it < 5; it++) {
+    for (int it = 0; it < 8; it++) {
         CAP();
         int mn, mx; minmax(&mn, &mx);
-        int nv = autoset_vdiv(st.vdiv, mn, mx);
-        if (nv == st.vdiv) break;
-        st.vdiv = (int8_t)nv; apply_fe(); delay_ms(30);
+        int v = st.vdiv, o = st.offset;
+        int again = autoset_fit(&v, &o, mn, mx);
+        st.vdiv = (int8_t)v; st.offset = (int16_t)o;
+        apply_fe();
+        if (!again) break;
+        delay_ms(30);                           /* let range relays / offset PWM settle */
     }
     meas_t m;
     CAP();
@@ -123,9 +133,9 @@ static void do_autoset(void) {
     CAP();
     int mn, mx; minmax(&mn, &mx);
     st.trig_level = (int16_t)((mn + mx) / 2);
-    redraw_all();
-    ui_toast_clear();
     toast_until = 0;
+    ui_toast_clear();
+    redraw_all();
 }
 
 static int mean_at_pwm(uint16_t pwm, void *ctx) {
@@ -193,7 +203,7 @@ int main(void) {
     apply_time();
     redraw_all();
     backlight(1);
-    if (!cal.valid) toast(" no factory cal", 3000);
+    if (!cal.valid) toast("No factory cal", 3000);
 
     for (;;) {
         kev_t ev[8];
@@ -207,7 +217,7 @@ int main(void) {
         if (chg & CHG_RUN) { adc_abort(); armed = 0; }
         if (chg & CHG_SCREEN) redraw_all();
         else {
-            if (chg & CHG_BARS) ui_draw_bars(&st, UNCAL());
+            if (chg & CHG_BARS) draw_bars();
             if (chg & (CHG_TRIG | CHG_FE)) ui_draw_markers(&st);
             if ((chg & CHG_MENU) && st.menu_open) ui_draw_menu(&st);
         }
@@ -229,7 +239,9 @@ int main(void) {
             float v = (float)batt_adc_read() * 3.3f / 4095.0f * 2.0f;
             ui_draw_batt(units_batt_pct(v));
         }
-        if (toast_until && (int32_t)(now - toast_until) >= 0) { toast_until = 0; ui_toast_clear(); }
+        if (toast_until && (int32_t)(now - toast_until) >= 0) {
+            toast_until = 0; ui_toast_clear(); draw_bars();   /* restore the mode label under it */
+        }
         WDT_CMD = 0xAAAA;
     }
 }

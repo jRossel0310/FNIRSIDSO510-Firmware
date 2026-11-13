@@ -47,12 +47,23 @@ uint32_t control_handle(scope_state_t *s, kev_t ev) {
         if (v) {
             int n = clampi(s->vdiv - v, 0, NUM_VDIV - 1);
             if (n == s->vdiv) return 0;
-            s->vdiv = (int8_t)n; return CHG_FE | CHG_BARS;
+            /* keep the trigger level at the same voltage on the new scale */
+            int zero = ADC_CENTER + s->offset;
+            int32_t rel = (int32_t)(s->trig_level - zero) * vdiv_mv[s->vdiv];
+            int32_t m = vdiv_mv[n];
+            s->trig_level = (int16_t)clampi(zero + (int)((rel >= 0 ? rel + m / 2 : rel - m / 2) / m), 0, 255);
+            s->vdiv = (int8_t)n; return CHG_FE | CHG_BARS | CHG_TRIG;
         }
         return 0;
     }
     if (h) { s->trig_pos = (int16_t)clampi(s->trig_pos + 10 * h, 0, PLOT_COLS - 1); return CHG_TRIG; }
-    if (v && s->ctl == CTL_POS_OFFSET) { s->offset = (int16_t)clampi(s->offset + 5 * v, -100, 100); return CHG_FE | CHG_TRIG; }
+    if (v && s->ctl == CTL_POS_OFFSET) {
+        int n = clampi(s->offset + 5 * v, -100, 100), d = n - s->offset;
+        if (!d) return 0;
+        s->offset = (int16_t)n;
+        s->trig_level = (int16_t)clampi(s->trig_level + d, 0, 255);   /* level moves with the trace */
+        return CHG_FE | CHG_TRIG;
+    }
     if (v && s->ctl == CTL_POS_LEVEL) { s->trig_level = (int16_t)clampi(s->trig_level + 2 * v, 0, 255); return CHG_TRIG; }
     return 0;
 }

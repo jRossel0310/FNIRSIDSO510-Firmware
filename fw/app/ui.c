@@ -51,10 +51,11 @@ void ui_draw_markers(const scope_state_t *s) {
 }
 
 void ui_draw_bars(const scope_state_t *s, int uncal) {
-    static const char *ctl_names[] = {"[T/V]", "[P/O]", "[P/L]"};
+    /* what the wheel | Up/Down adjust; padded to the full 21-column slot (cols 12..32) */
+    static const char *ctl_names[] = {"Time | Volts         ", "TrigPos | Offset     ", "TrigPos | Level      "};
     static const char *trig_names[] = {"Auto  ", "Normal", "Single"};
     char b[16];
-    lcd_fill(0, 0, 19 * 8, 16, C_BLACK);
+    lcd_fill(0, 0, 12 * 8, 16, C_BLACK);
     int c = lcd_text(0, 0, " ", C_WHITE, C_BLACK);
     c = lcd_text(c, 0, fmt_si(b, (float)tdiv_ns[s->tdiv] * 1e-9f, "s", 1), C_WHITE, C_BLACK);
     lcd_text(7, 0, s->run ? "RUN " : "STOP", C_BLACK, s->run ? C_GREEN : C_RED);
@@ -80,7 +81,7 @@ void ui_draw_meas(const scope_state_t *s, const meas_t *m) {
         c = lcd_text(c + 1, 14, fmt_u(b, (uint32_t)(m->duty_pct + 0.5f), 2), C_WHITE, C_BLACK);
         lcd_text(c, 14, "%", C_WHITE, C_BLACK);
     }
-    float vpp = (float)(m->vmax - m->vmin) * units_volts_per_code(s->vdiv, s->probe_x10);
+    float vpp = m->vpp_codes * units_volts_per_code(s->vdiv, s->probe_x10);
     lcd_text(33, 14, fmt_si(b, vpp, "V", 0), C_YELLOW, C_BLACK);
 }
 
