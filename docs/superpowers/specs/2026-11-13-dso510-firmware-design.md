@@ -192,3 +192,62 @@ Every app build must implement power-off (lesson from `hello`).
 
 CSV/storage, USB, generator UI, measurements beyond the single line, persistence, roll mode,
 settings menu beyond the trigger/coupling/probe items, language/themes.
+
+## Sub-project 2: storage, CSV export, USB drive
+
+Approved in conversation 2026-11-13. Hardware facts: `NOTES.md` § SPI NOR flash and § first USB contact.
+
+### Storage
+
+- **Flash:** Puya 8 MiB SPI NOR (JEDEC 0x856017) on SPI3 (PC10/11/12, CS PD12), mode 0, 4 KiB erase
+  sectors, 256-byte program pages. Driver `fw/common/spiflash.[ch]`: read, 4 KiB sector erase, page
+  program, busy polling with timeouts.
+- **Write guard:** every erase/program address must be `< 0x500000` (the 5 MiB user volume), checked
+  in the driver itself and unit-tested. The 3 MiB system volume at 0x500000 (stock UI graphics) is
+  never written, so the stock firmware keeps working after a reflash.
+- **File system:** FatFs (ChaN, vendored unmodified in `fw/third_party/fatfs/` with its licence),
+  one volume = the existing FAT12 user volume at flash offset 0: 4096-byte sectors, 1280 sectors.
+  No reformatting; stock folders (`LOGO`, `Screenshot file`, …) are left alone.
+- **Block layer:** `disk_read/disk_write` map 4 KiB FAT sectors 1:1 onto flash erase sectors
+  (write = erase + 16 page programs). Shared by FatFs and USB so both see the same bytes.
+
+### CSV save (long-press Run)
+
+- Freezes the current record, then writes `/CSV/CAP<nnnn>.CSV`, `nnnn` = 1 + highest existing number
+  (folder created if missing; 9999 max → "Drive full").
+- Format as in § CSV format. Values: `time_s` = (i − trigger_index) / sample_rate with 9 decimals,
+  `volts` with 4 decimals (probe factor applied), `adc_code` 0–255. `cal=` line gives the offset PWM
+  and V/div actually used. The whole record (4 screens, ≤ 4800 rows, ≈ 120 KB) is saved.
+- The formatter lives in `fw/core/csv.[ch]` (no printf; host-tested), producing the file in chunks.
+- Toasts: "Saved CAPnnnn", "Drive full", "Save failed" (any FatFs/flash error). Target ≤ 2 s.
+- Saving does not change the scope's run/stop state after it finishes.
+
+### USB drive (auto-mount)
+
+- USB FS device, Mass Storage Class / Bulk-Only / SCSI transparent, 64-byte bulk endpoints, 48 MHz
+  USB clock = 240 MHz / 5. Exposes the 5 MiB user volume only, as 1280 × 4096-byte blocks (as stock),
+  removable (RMB=1). Own VID:PID strings are not required; reuse stock `2e3c:5720`.
+- **Auto-mount:** the device is always enabled with the D+ pull-up on. A computer enumerates it; a
+  charger never does, so nothing happens there. The scope keeps running normally while connected.
+- **Ownership while connected:** the host owns the volume (read/write). The scope's FatFs volume is
+  unmounted while the host is attached.
+- **Save while connected:** wait until the host has issued no WRITE for ≥ 1 s (max 5 s, else "Busy, try
+  again"), then report MEDIUM NOT PRESENT (sense 02/3A/00) to the host, mount FatFs, write the file,
+  unmount, then report UNIT ATTENTION, MEDIUM MAY HAVE CHANGED (06/28/00) once, then ready. The
+  host sees an eject + re-insert and re-reads the directory.
+- Detach (USB suspend or no SOF for 1 s) returns ownership to the scope.
+- Linux is the primary test host; Windows behaviour is designed for (stock used the same 4 KiB block
+  geometry with Windows) and checked when available.
+
+### Testing
+
+- Host tests: CSV formatter (header, rounding, negative times, chunking), next-file-number logic,
+  SCSI command handler against a RAM disk (INQUIRY, READ CAPACITY, READ/WRITE(10), TEST UNIT READY,
+  REQUEST SENSE, MODE SENSE, PREVENT/ALLOW, eject/re-insert sense sequence), flash write guard.
+- On device: save several captures; files open and plot; auto-mount on Linux; save while mounted shows
+  the new file; plain charger does nothing; stock firmware still boots and shows its files after
+  reflashing it.
+
+### Out of scope for sub-project 2
+
+Live streaming (sub-project 4), generator UI (3), screenshots (dropped), deleting files on the scope.
