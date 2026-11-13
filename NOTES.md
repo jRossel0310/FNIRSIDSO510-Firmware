@@ -65,8 +65,22 @@ Acquisition (FUN_0801AD00, FUN_0801A95C, DMA ISRs IRQ12/15/17):
 - DMA1 ch5 transfer-complete ISR (IRQ15) stops TMR4 and sets capture-done flag (0x20000284).
 
 Display:
-- **8080 parallel LCD on XMC bank 1**: command @ 0x60000000, data @ 0x60020000 (RS = A16 on 16-bit bus).
+- **ST7789** 320×240, 16-bit 8080 bus on XMC bank 1 NE1: command @ 0x6001FFFE, data @ 0x60020000
+  (RS = A16 = PD11). Pins: PD0,1,4(NOE),5(NWE),7(NE1),8,9,10,11(A16),14,15 + PE7–PE15. IOMUX 0x40010030 |= 0x08000000.
+- XMC: BK1CTRL1=0x5010 (|1 enable), BK1TMG1=0x02020424, BK1TMGWR1=0x202, 0xA0000220 low byte = 8.
+- LCD reset = PD6 (high 10 ms, low 20 ms, high 20 ms). Init: SLPOUT, 120 ms, 36=00, 3A=05, B2 0C 0C 00 33 33,
+  B7 35, BB 28, C0 2C, C2 01, C3 0B, C4 20, C6 0F, D0 A4 A1, E0/E1 gamma, DISPON, then MADCTL 36=60 (landscape).
 - Framebuffer → LCD via DMA1 ch2 memory-to-memory, 16-bit, from 0x20007470.
+- **Backlight = PA2, TMR9 CH1 PWM, 1 kHz** (ARR 99), duty = brightness setting (byte @ 0x200003B5); 0 on shutdown.
+
+Power / misc GPIO:
+- **PD3 = power latch** (set high first thing in init) — very likely; confirmed if hello app stays on.
+- PD2 polled at boot (button). PA8 read alongside battery measurement (charger status?).
+- PA3 = TMR9 CH2 1 kHz 50 % — probe-compensation/cal square wave?
+- PB9 = TMR11 CH1 2 kHz PWM, duty toggled → **buzzer**.
+- PA7 = TMR14 CH1 12-bit PWM (ARR 0xFFE), updated often → front-end offset / trigger level DAC.
+- USART1 TX on PA9 @ 1.5 Mbaud (debug console? something on the board?).
+- SPI flash: SPI3 remapped to PC10/11/12, CS = PD12.
 
 Other:
 - ADC1 ch13 (PC3) single conversion → **battery voltage** (FUN_08009408). PA8 = charge/power sense?
@@ -83,9 +97,8 @@ Other:
 
 ## Open questions / next steps
 - Confirm part number + external ADC chip + LCD controller from board photos
-- LCD controller init sequence (find writes to 0x60000000) → ST7789/ILI9341?
 - Button GPIO map, front-end relays/gain control GPIOs, trigger implementation
 - Exact 48 MS/s timer interleave scheme
-- First custom app: blink/LCD fill at 0x08007000, flash via IAP (needs gcc-arm-none-eabi)
+- First custom app: `fw/hello` (color bars + bouncing square). Flash via IAP — result: TBD
 - Open case: identify AT32 part number, SPI flash, ADC, FPGA (if any), LCD controller, SWD pads
 - Check flash access protection (FAP) via SWD / Artery ROM bootloader (BOOT0 → USB DFU)

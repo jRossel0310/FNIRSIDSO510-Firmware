@@ -1,2 +1,4 @@
 ghidra_project/
 re/headless.log
+fw/**/*.elf
+fw/**/*.map
