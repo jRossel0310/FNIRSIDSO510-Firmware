@@ -1,7 +1,7 @@
 # DSO-510 replacement firmware — design
 
 Date: 2026-11-13
-Status: approved in conversation; awaiting written-spec review
+Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14).
 
 ## Goal
 

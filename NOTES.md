@@ -153,3 +153,12 @@ Other:
 - faulttest: uptime counts 1/s (240 MHz + SysTick OK); RUN → HARD FAULT screen, PC 0x0800722E = the
   `udf` in main, CFSR 0x00010000 (UNDEFINSTR), HFSR 0x40000000 (FORCED) (photo `docs/hwfaultimg.jpg`);
   Power switches off. `tools/flash.sh` works.
+- Scope app (sub-project 1) verified: boot, timebase sweep 500 ns–50 ms/div, V/div 10 mV–10 V, AC/DC coupling
+  direction correct (FE_PC5_FOR_DC=1), trigger Auto/Normal/Single + edges, run/stop, power off,
+  auto-set (sine + open input), auto-zero, power-off during auto-zero.
+- **Offset PWM (PA7) filter settles slowly: tau ≈ 0.33 s.** A 100-code offset move needs ~2 s to settle to
+  < 0.5 code. Once settled, the trace position matches the ideal model exactly
+  (code = 128 + offset + V / (V/div) × 25). Any code that measures after an offset change must wait
+  `fe_settle_ms()` (diagnostic photos: auto-set debug overlay, `make EXTRA=-DAUTOSET_DEBUG`).
+- Generator test sine sits on ~+1.6 V DC (0.44–2.72 V at 1 kHz).
+- Cal pad reads ~3.0–3.1 Vpp with nominal gain (pad amplitude not yet checked with a meter).
