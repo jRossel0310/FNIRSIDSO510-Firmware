@@ -50,14 +50,16 @@ void lcd_init(void) {
     cmd(0x36); dat(0x60);
 }
 
-static void window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+void lcd_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     cmd(0x2A); dat(x0 >> 8); dat(x0); dat(x1 >> 8); dat(x1);
     cmd(0x2B); dat(y0 >> 8); dat(y0); dat(y1 >> 8); dat(y1);
     cmd(0x2C);
 }
 
+void lcd_push(uint16_t c) { LCD_DATA = c; }
+
 void lcd_fill(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c) {
-    window(x, y, x + w - 1, y + h - 1);
+    lcd_window(x, y, x + w - 1, y + h - 1);
     for (uint32_t n = (uint32_t)w * h; n; n--) LCD_DATA = c;
 }
 
@@ -66,7 +68,7 @@ int lcd_text(int col, int row, const char *s, uint16_t fg, uint16_t bg) {
         unsigned ch = (uint8_t)*s;
         if (ch < FONT_FIRST || ch > FONT_LAST) ch = '?';
         const uint8_t *g = font8x16[ch - FONT_FIRST];
-        window(col * FONT_W, row * FONT_H, col * FONT_W + FONT_W - 1, row * FONT_H + FONT_H - 1);
+        lcd_window(col * FONT_W, row * FONT_H, col * FONT_W + FONT_W - 1, row * FONT_H + FONT_H - 1);
         for (int y = 0; y < FONT_H; y++)
             for (int x = 0; x < FONT_W; x++)
                 LCD_DATA = (g[y] & (0x80 >> x)) ? fg : bg;

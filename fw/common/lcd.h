@@ -15,6 +15,9 @@
 #define C_NAVY   RGB565(16, 16, 48)
 
 void lcd_init(void);
+// Raw access: set a window, then push w*h pixels row-major.
+void lcd_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
+void lcd_push(uint16_t c);
 void lcd_fill(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c);
 // Text on an 8x16 grid; col/row are character cells (40 x 15). Returns next col.
 int lcd_text(int col, int row, const char *s, uint16_t fg, uint16_t bg);
