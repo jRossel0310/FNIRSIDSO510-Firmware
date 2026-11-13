@@ -6,6 +6,7 @@ OBJCOPY = arm-none-eabi-objcopy
 ARCH    = -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 CFLAGS  = $(ARCH) -O2 -g -Wall -Wextra -ffreestanding -ffunction-sections -fdata-sections \
           -fno-tree-loop-distribute-patterns -Icommon -Icore -Iapp
+CFLAGS += $(EXTRA)
 LDFLAGS = -nostdlib -T common/link.ld -Wl,--gc-sections -Wl,-Map=build/$(APP).map
 
 COMMON = $(wildcard common/*.c)

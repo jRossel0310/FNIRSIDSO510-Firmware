@@ -38,11 +38,21 @@ static void toast(const char *msg, uint32_t ms) { toast_msg = msg; ui_toast(msg)
 /* Status bars; re-show an active toast, since the mode label shares its columns. */
 static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); }
 
+static uint16_t fe_pwm;          /* offset PWM last applied */
+static uint32_t fe_settle_need;  /* settle time owed by the last apply_fe() */
+
 static void apply_fe(void) {
     meas_avg_reset(&meas_avg);
     fe_set_range(st.vdiv);
     fe_set_coupling_dc(st.coupling_dc);
-    fe_set_offset_pwm(cal_offset_pwm(&cal, cal_set_for_rate(rc.rate_hz), st.vdiv, st.offset));
+    int set = cal_set_for_rate(rc.rate_hz);
+    uint16_t pwm = cal_offset_pwm(&cal, set, st.vdiv, st.offset);
+    int span = (int)cal.hi[set][st.vdiv] - (int)cal.lo[set][st.vdiv];   /* PWM per 200 codes */
+    if (span <= 0) span = 1000;
+    uint32_t need = fe_settle_ms(((int)pwm - (int)fe_pwm) * 200 / span);
+    if (need > fe_settle_need) fe_settle_need = need;   /* keep the longest pending wait */
+    fe_pwm = pwm;
+    fe_set_offset_pwm(pwm);
 }
 
 static void set_time(int tdiv) {
@@ -58,7 +68,11 @@ static void apply_time(void) {
     apply_fe();
 }
 
-static void fe_settle(void) { delay_ms(FE_SETTLE_MS); }
+/* Block until the offset PWM filter has settled after the last front-end change(s). */
+static void fe_settle(void) {
+    delay_ms(fe_settle_need > FE_SETTLE_MS ? fe_settle_need : FE_SETTLE_MS);
+    fe_settle_need = 0;
+}
 
 /* Expected capture time plus 1 s margin. */
 static uint32_t capture_timeout_ms(void) { return (uint32_t)((uint64_t)rec_n * 1000u / rc.rate_hz) + 1000u; }
@@ -94,7 +108,7 @@ static void process_capture(void) {
     render_spans(rec, rec_n, start, ((sps << 8) + PLOT_W / 2) / PLOT_W, spans, PLOT_W);
     ui_draw_trace(spans);
     meas_t raw;
-    measure(rec + start, (int)sps, rc.rate_hz, &raw);
+    measure(rec, rec_n, rc.rate_hz, &raw);         /* whole record (4 screens): more periods, steadier */
     meas_avg_update(&meas_avg, &raw, &last_meas);
     have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10;
     ui_draw_meas(&st, &last_meas);
@@ -109,9 +123,56 @@ static void minmax(int *mn, int *mx) {
 #define CAP() do { if (capture_blocking() < 0) { apply_time(); redraw_all(); \
                     toast(" ADC timeout  ", 2000); return; } } while (0)
 
+#ifdef AUTOSET_DEBUG
+/* Temporary hardware diagnostics: log each auto-set step, then watch the trace settle. */
+static int dbg_n; static int16_t dbg[16][5];
+static void dbg_log(int mn, int mx) {
+    if (dbg_n < 16) { dbg[dbg_n][0] = st.vdiv; dbg[dbg_n][1] = st.offset; dbg[dbg_n][2] = (int16_t)mn;
+                      dbg[dbg_n][3] = (int16_t)mx;
+                      dbg[dbg_n][4] = (int16_t)cal_offset_pwm(&cal, cal_set_for_rate(rc.rate_hz), st.vdiv, st.offset); dbg_n++; }
+}
+static void dbg_num(int *c, int row, int v) {
+    char b[8]; char *p = b;
+    if (v < 0) { *p++ = '-'; v = -v; }
+    fmt_u(p, (uint32_t)v, 1);
+    *c = lcd_text(*c, row, b, C_WHITE, C_BLACK);
+    *c = lcd_text(*c, row, " ", C_WHITE, C_BLACK);
+}
+static void dbg_show(void) {
+    lcd_fill(0, 16, LCD_W, 16 * 13, C_BLACK);
+    lcd_text(0, 1, "it vdiv off min max pwm", C_CYAN, C_BLACK);
+    for (int i = 0; i < dbg_n && i < 12; i++) {
+        int c = 0;
+        dbg_num(&c, 2 + i, i);
+        for (int k = 0; k < 5; k++) dbg_num(&c, 2 + i, dbg[i][k]);
+    }
+    /* settle watch: same settings, capture at +0.1/0.3/1/2 s */
+    static const uint16_t at[4] = {100, 300, 1000, 2000};
+    uint32_t t0 = millis();
+    int c = lcd_text(24, 1, "settle mn/mx", C_CYAN, C_BLACK);
+    (void)c;
+    for (int k = 0; k < 4; k++) {
+        while (millis() - t0 < at[k]) WDT_CMD = 0xAAAA;
+        if (capture_blocking() < 0) break;
+        int mn, mx; mn = 255; mx = 0;
+        for (int i = 0; i < rec_n; i++) { if (rec[i] < mn) mn = rec[i]; if (rec[i] > mx) mx = rec[i]; }
+        c = 24; dbg_num(&c, 2 + k, at[k]); dbg_num(&c, 2 + k, mn); dbg_num(&c, 2 + k, mx);
+    }
+    lcd_text(24, 7, "photo, any key", C_YELLOW, C_BLACK);
+    while (keys_read()) WDT_CMD = 0xAAAA;
+    while (!keys_read()) WDT_CMD = 0xAAAA;
+    while (keys_read()) WDT_CMD = 0xAAAA;
+    keys_reset(&ks, KEY_BIT(KEY_UP) | KEY_BIT(KEY_DOWN) | KEY_BIT(KEY_WHEEL_L) | KEY_BIT(KEY_WHEEL_R));
+}
+#define DBG_LOG(mn, mx) dbg_log(mn, mx)
+#else
+#define DBG_LOG(mn, mx) ((void)0)
+#endif
+
 static void do_autoset(void) {
     toast(" AUTO...      ", 60000);
     adc_abort(); armed = 0;
+    fe_settle_need = 0;          /* only the moves made by auto-set itself count from here */
     st.offset = 0; st.trig_mode = TRIG_AUTO; st.trig_pos = PLOT_W / 2; st.run = 1;
     st.tdiv = TDIV_1MS;
     apply_time();
@@ -119,6 +180,7 @@ static void do_autoset(void) {
     for (int it = 0; it < AUTOSET_MAX_ITER; it++) {
         CAP();
         int mn, mx; minmax(&mn, &mx);
+        DBG_LOG(mn, mx);
         int v = st.vdiv, o = st.offset;
         int again = autoset_fit(&v, &o, mn, mx);
         st.vdiv = (int8_t)v; st.offset = (int16_t)o;
@@ -139,8 +201,12 @@ static void do_autoset(void) {
     CAP();
     int mn, mx; minmax(&mn, &mx);
     st.trig_level = (int16_t)((mn + mx) / 2);
+    DBG_LOG(mn, mx);
     toast_until = 0;
     ui_toast_clear();
+#ifdef AUTOSET_DEBUG
+    dbg_show(); dbg_n = 0;
+#endif
     redraw_all();
 }
 
@@ -159,16 +225,19 @@ static void wait_power_aware(uint32_t ms) {
     for (uint32_t t0 = millis(); millis() - t0 < ms; ) { WDT_CMD = 0xAAAA; poll_power(); }
 }
 
-static int mean_at_pwm(uint16_t pwm, void *ctx) {
-    (void)ctx;
-    if (zero_failed) return ADC_CENTER;
+/* Trace mean in 1/16 ADC codes with the offset PWM at pwm, after the PA7 filter has settled
+   (wait scaled to the PWM move; span = PWM per 200 codes). */
+static int mean_x16_at_pwm(uint16_t pwm, int span) {
+    if (zero_failed) return ADC_CENTER * 16;
+    int dcodes = span > 0 ? ((int)pwm - (int)fe_pwm) * 200 / span : 200;
     fe_set_offset_pwm(pwm);
-    wait_power_aware(FE_SETTLE_MS);             /* let the PA7 PWM filter settle */
+    fe_pwm = pwm;
+    wait_power_aware(fe_settle_ms(dcodes));
     poll_power();
-    if (capture_blocking() < 0) { zero_failed = 1; return ADC_CENTER; }
+    if (capture_blocking() < 0) { zero_failed = 1; return ADC_CENTER * 16; }
     uint32_t sum = 0;
     for (int i = 0; i < rec_n; i++) sum += rec[i];
-    return (int)(sum / (uint32_t)rec_n);
+    return (int)(sum * 16u / (uint32_t)rec_n);
 }
 
 static void do_autozero(void) {
@@ -187,7 +256,15 @@ static void do_autozero(void) {
             ui_toast(" ZERO range   ");
             lcd_text(31, 0, fmt_u(b, (uint32_t)r, 1), C_BLACK, C_YELLOW);
             fe_set_range(r);
-            uint16_t pw = cal_search_pwm(mean_at_pwm, 0, ADC_CENTER, tmp.lo[plan[p].set][r], tmp.hi[plan[p].set][r]);
+            int set = plan[p].set;
+            int span = (int)tmp.hi[set][r] - (int)tmp.lo[set][r];
+            uint16_t pw = cal_offset_pwm(&tmp, set, r, 0);
+            /* measure settled, correct directly; repeat until within half a code (max 3) */
+            for (int k = 0; k < 3 && !zero_failed; k++) {
+                int m = mean_x16_at_pwm(pw, span);
+                if (m - ADC_CENTER * 16 >= -8 && m - ADC_CENTER * 16 <= 8) break;
+                pw = cal_zero_step(pw, m, span);
+            }
             if (zero_failed) {
                 apply_time();
                 redraw_all();

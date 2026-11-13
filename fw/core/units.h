@@ -25,3 +25,8 @@ float units_volts_per_code(int vdiv_idx, int probe_x10);
 float units_code_to_volts(int code, int vdiv_idx, int offset, int probe_x10);
 /* Stock FNIRSI battery thresholds. */
 int units_batt_pct(float vbat);
+
+/* Front-end settle time after the offset moves by dcodes ADC codes. The PA7 offset PWM filter
+   settles exponentially with tau ~= 0.33 s (measured on hardware, docs/autodbg): wait
+   40 ms (relays) + 350 ms * ln(2*|dcodes|), i.e. until the residual error is < 0.5 code. */
+uint32_t fe_settle_ms(int dcodes);

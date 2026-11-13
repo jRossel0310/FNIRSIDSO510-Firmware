@@ -35,3 +35,11 @@ int units_batt_pct(float v) {
     for (int i = 0; i < 9; i++) if (v >= th[i]) return 100 - 10 * i;
     return 10;
 }
+
+uint32_t fe_settle_ms(int dcodes) {
+    uint32_t d = (uint32_t)(dcodes < 0 ? -dcodes : dcodes);
+    if (d <= 1) return 40;
+    int l2 = 0;                                 /* ceil(log2(2d)) */
+    while ((1u << l2) < 2 * d) l2++;
+    return 40u + 243u * (uint32_t)l2;           /* 350 ms * ln 2 = 243 ms per doubling */
+}

@@ -58,3 +58,14 @@ void cal_shift_zero(cal_t *c, int set, int range, uint16_t pwm_at_zero) {
     if (hi > CAL_PWM_MAX) hi = CAL_PWM_MAX;
     c->lo[set][range] = (uint16_t)lo; c->hi[set][range] = (uint16_t)hi;
 }
+
+uint16_t cal_zero_step(uint16_t pwm, int mean_x16, int span) {
+    if (span <= 0) return pwm;
+    int32_t e = (int32_t)mean_x16 - 128 * 16;            /* error, 1/16 codes; + = trace too high */
+    int32_t n = e * span, d = 200 * 16;
+    int32_t dp = (n >= 0 ? n + d / 2 : n - d / 2) / d;    /* rounded PWM correction */
+    int32_t v = (int32_t)pwm - dp;
+    if (v < 0) v = 0;
+    if (v > CAL_PWM_MAX) v = CAL_PWM_MAX;
+    return (uint16_t)v;
+}

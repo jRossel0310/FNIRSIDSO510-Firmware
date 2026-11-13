@@ -53,4 +53,12 @@ void test_cal(void) {
     CHECK_EQ(c.lo[CAL_SET_SLOW][3], 0x500);
     CHECK_EQ(c.hi[CAL_SET_SLOW][3], 0xD00);
     CHECK_EQ(cal_offset_pwm(&c, CAL_SET_SLOW, 3, 0), 0x900);
+    /* auto-zero step: span 1040 PWM per 200 codes = 5.2 PWM/code */
+    CHECK_EQ(cal_zero_step(2000, 128 * 16, 1040), 2000);          /* already centred */
+    CHECK_EQ(cal_zero_step(2000, 138 * 16, 1040), 1948);          /* 10 codes high -> -52 */
+    CHECK_EQ(cal_zero_step(2000, 118 * 16, 1040), 2052);          /* 10 codes low -> +52 */
+    CHECK_EQ(cal_zero_step(2000, 128 * 16 + 8, 1040), 1997);      /* half code -> -2.6 -> -3 */
+    CHECK_EQ(cal_zero_step(10, 250 * 16, 1040), 0);               /* clamped low */
+    CHECK_EQ(cal_zero_step(CAL_PWM_MAX - 5, 0, 1040), CAL_PWM_MAX);/* clamped high */
+    CHECK_EQ(cal_zero_step(2000, 0, 0), 2000);                    /* bad span: unchanged */
 }

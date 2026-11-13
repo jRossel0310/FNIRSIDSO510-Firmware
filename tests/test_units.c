@@ -31,4 +31,12 @@ void test_units(void) {
     CHECK_EQ(units_batt_pct(3.95f), 80);
     CHECK_EQ(units_batt_pct(3.80f), 50);
     CHECK_EQ(units_batt_pct(3.50f), 10);
+    /* offset settle time: tau ~0.33 s, until < 0.5 code residual */
+    CHECK_EQ(fe_settle_ms(0), 40);
+    CHECK_EQ(fe_settle_ms(1), 40);
+    CHECK_EQ(fe_settle_ms(-1), 40);
+    CHECK_EQ(fe_settle_ms(2), 40 + 2 * 243);          /* 2d = 4 -> 2 doublings */
+    CHECK_EQ(fe_settle_ms(100), 40 + 8 * 243);        /* 200 -> 8 doublings: ~2 s */
+    CHECK_EQ(fe_settle_ms(-100), fe_settle_ms(100));
+    CHECK_EQ(fe_settle_ms(200), 40 + 9 * 243);        /* full -100..+100 swing */
 }

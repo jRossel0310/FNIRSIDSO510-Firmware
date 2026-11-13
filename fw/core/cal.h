@@ -27,3 +27,8 @@ typedef int (*cal_mean_fn)(uint16_t pwm, void *ctx);
 uint16_t cal_search_pwm(cal_mean_fn mean_at, void *ctx, int target, uint16_t a, uint16_t b);
 /* Move a range's lo/hi so that offset 0 maps to pwm_at_zero (span unchanged). */
 void cal_shift_zero(cal_t *c, int set, int range, uint16_t pwm_at_zero);
+
+/* One auto-zero step: given the trace mean (in 1/16 ADC codes) measured with the offset PWM at
+   pwm, return the PWM that puts the mean on ADC_CENTER, using the range's PWM span (hi - lo per
+   200 codes). Clamped to 0..CAL_PWM_MAX; span <= 0 returns pwm unchanged. */
+uint16_t cal_zero_step(uint16_t pwm, int mean_x16, int span);
