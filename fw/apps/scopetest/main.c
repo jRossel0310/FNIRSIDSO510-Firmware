@@ -14,6 +14,7 @@
 static uint8_t cap[CAP_N];
 
 static int range = 5, rate = 3, coupling = 0, frozen = 0;
+static uint32_t glitches, glitch_frames, notrig;
 static uint16_t offset = FE_OFFSET_DEFAULT;
 
 static void draw_status(void) {
@@ -52,7 +53,6 @@ int main(void) {
     for (int x = 0; x < PLOT_W; x++) draw_col(x, -1, -1);
     lcd_fill(PLOT_X - 1, PLOT_Y - 1, PLOT_W + 2, 1, C_GRAY);
     lcd_fill(PLOT_X - 1, PLOT_Y + PLOT_H, PLOT_W + 2, 1, C_GRAY);
-    lcd_text(0, 13, " CAL pad: 1kHz square  GEN: 1kHz sine ", C_CYAN, C_BLACK);
     lcd_text(0, 14, " </>range ^v offset RUN rate MODE pc5", C_GRAY, C_BLACK);
     backlight(1);
 
@@ -105,18 +105,43 @@ int main(void) {
         uint32_t sum = 0; uint8_t mn = 255, mx = 0;
         for (int i = 0; i < CAP_N; i++) { sum += cap[i]; if (cap[i] < mn) mn = cap[i]; if (cap[i] > mx) mx = cap[i]; }
 
-        // Software trigger with hysteresis: arm once the signal is clearly below the midpoint
-        // (by 1/8 of peak-to-peak), then fire on the first sample at/above the midpoint.
-        // Without hysteresis, noise on a slow slope triggers on the falling edge too.
+        // Software trigger with hysteresis. Level = mean (robust to a single bad sample, unlike
+        // (min+max)/2). Arm once clearly below the level, fire at the first sample >= level.
         int t0 = 0, trig = 0;
+        int lvl = sum / CAP_N, hyst = (mx - mn) / 8;
         if (mx - mn > 8) {
-            int lvl = (mn + mx) / 2, arm = lvl - (mx - mn) / 8, armed = 0;
+            int armed = 0;
             for (int i = 0; i < PLOT_W; i++) {
-                if (cap[i] <= arm) armed = 1;
+                if (cap[i] <= lvl - hyst) armed = 1;
                 else if (armed && cap[i] >= lvl) { t0 = i; trig = 1; break; }
             }
         }
-        lcd_text(36, 0, trig ? "TRG" : "   ", C_GREEN, C_BLACK);
+        // Glitch detector: a sample far from both neighbours that agree with each other.
+        uint32_t g = 0;
+        int gthr = (mx - mn) / 3 + 6;
+        for (int i = 1; i < CAP_N - 1; i++) {
+            int a = cap[i - 1], b = cap[i], c2 = cap[i + 1];
+            int d1 = b - a, d2 = b - c2, dn = a - c2;
+            if (d1 < 0) d1 = -d1;
+            if (d2 < 0) d2 = -d2;
+            if (dn < 0) dn = -dn;
+            if (d1 > gthr && d2 > gthr && dn < gthr / 2) g++;
+        }
+        glitches += g;
+        if (g) { glitch_frames++; }
+        if (!trig) notrig++;
+        lcd_text(36, 0, trig ? "TRG" : "---", trig ? C_GREEN : C_RED, C_BLACK);
+        {
+            char b2[12];
+            int c = lcd_text(0, 13, " glitch smp ", C_GRAY, C_BLACK);
+            c = lcd_text(c, 13, fmt_u(b2, glitches, 5), g ? C_RED : C_WHITE, C_BLACK);
+            c = lcd_text(c, 13, " frm ", C_GRAY, C_BLACK);
+            c = lcd_text(c, 13, fmt_u(b2, glitch_frames, 4), C_WHITE, C_BLACK);
+            c = lcd_text(c, 13, " notrig ", C_GRAY, C_BLACK);
+            lcd_text(c, 13, fmt_u(b2, notrig, 4), C_WHITE, C_BLACK);
+        }
+        // Normal-mode behaviour: keep the previous trace if this capture didn't trigger.
+        if (!trig && (mx - mn) > 8) continue;
 
         // ---- draw trace (per-column erase + vertical segment) ----
         int last = to_y(cap[t0]);
