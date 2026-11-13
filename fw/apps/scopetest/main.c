@@ -27,7 +27,7 @@ static void draw_status(void) {
     c = lcd_text(c, 0, fmt_u(b, offset, 4), C_WHITE, C_BLACK);
     c = lcd_text(c, 0, " PC5=", C_GRAY, C_BLACK);
     c = lcd_text(c, 0, coupling ? "1" : "0", C_WHITE, C_BLACK);
-    lcd_text(c, 0, frozen ? " HOLD" : "     ", C_RED, C_BLACK);
+    lcd_text(c, 0, frozen ? " H" : "  ", C_RED, C_BLACK);
 }
 
 static inline uint16_t bg_px(int x, int y) {
@@ -105,12 +105,18 @@ int main(void) {
         uint32_t sum = 0; uint8_t mn = 255, mx = 0;
         for (int i = 0; i < CAP_N; i++) { sum += cap[i]; if (cap[i] < mn) mn = cap[i]; if (cap[i] > mx) mx = cap[i]; }
 
-        // software trigger: first rising crossing of the midpoint in the first half
-        int t0 = 0;
+        // Software trigger with hysteresis: arm once the signal is clearly below the midpoint
+        // (by 1/8 of peak-to-peak), then fire on the first sample at/above the midpoint.
+        // Without hysteresis, noise on a slow slope triggers on the falling edge too.
+        int t0 = 0, trig = 0;
         if (mx - mn > 8) {
-            uint8_t lvl = (mn + mx) / 2;
-            for (int i = 1; i < PLOT_W; i++) if (cap[i - 1] < lvl && cap[i] >= lvl) { t0 = i; break; }
+            int lvl = (mn + mx) / 2, arm = lvl - (mx - mn) / 8, armed = 0;
+            for (int i = 0; i < PLOT_W; i++) {
+                if (cap[i] <= arm) armed = 1;
+                else if (armed && cap[i] >= lvl) { t0 = i; trig = 1; break; }
+            }
         }
+        lcd_text(36, 0, trig ? "TRG" : "   ", C_GREEN, C_BLACK);
 
         // ---- draw trace (per-column erase + vertical segment) ----
         int last = to_y(cap[t0]);
