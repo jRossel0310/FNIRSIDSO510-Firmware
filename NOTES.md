@@ -99,6 +99,8 @@ Other:
 - Confirm part number + external ADC chip + LCD controller from board photos
 - Button GPIO map, front-end relays/gain control GPIOs, trigger implementation
 - Exact 48 MS/s timer interleave scheme
-- First custom app: `fw/hello` (color bars + bouncing square). Flash via IAP — result: TBD
+- First custom app: `fw/hello` (color bars + bouncing square). **2026-11-13: flashed via IAP, WORKS** —
+  bootloader accepted `APP_DSO-510_HELLO.bin` (no signature/name check seen), LCD init + backlight (PA2) confirmed.
+  IAP sequence: copy → USB disconnect → re-enumerate ~1 s → app starts (USB gone, app has no USB).
 - Open case: identify AT32 part number, SPI flash, ADC, FPGA (if any), LCD controller, SWD pads
 - Check flash access protection (FAP) via SWD / Artery ROM bootloader (BOOT0 → USB DFU)
