@@ -20,3 +20,8 @@ const void *const vectors[16 + 84] = {
     [1] = Reset_Handler,
     [2 ... 16 + 84 - 1] = Default_Handler,
 };
+
+// Minimal libc pieces GCC may emit calls to (we link with -nostdlib).
+#include <stddef.h>
+void *memset(void *d, int c, size_t n) { unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
+void *memcpy(void *d, const void *s, size_t n) { unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
