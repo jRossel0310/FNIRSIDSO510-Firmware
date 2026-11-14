@@ -24,6 +24,7 @@ void test_gen(void);
 void test_control_gen(void);
 void test_ilv(void);
 void test_settings(void);
+void test_cfgfile(void);
 
 int main(void) {
     test_fmt();
@@ -49,6 +50,7 @@ int main(void) {
     test_control_gen();
     test_ilv();
     test_settings();
+    test_cfgfile();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }
