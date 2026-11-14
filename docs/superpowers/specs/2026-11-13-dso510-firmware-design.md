@@ -367,8 +367,7 @@ directly: unipolar, about 0 … 3.1 V (code 548…3548 measured as 0.44…2.72 V
 - Waveforms: sine, square (duty 1–99 %), triangle, sawtooth (rising), DC, half-wave rectified sine,
   full-wave rectified sine, exponential rise, exponential fall. (Stock step, anti-step, multi-tone, sinc and
   Lorentz are out of scope.)
-- Frequency 1 Hz … 50 kHz. One period is a table of N points (20 ≤ N ≤ 400) played at TMR6's update rate,
-  with update rate ≤ 1 MS/s. For a requested frequency the planner picks N and the timer divider (prescaler ×
+- Frequency 1 Hz … 50 kHz. A table of n points (n ≤ 400) holds m whole periods, with at least 20 points per period, played at TMR6's update rate (≤ 1 MS/s): f = 240 MHz × m / (timer divider × n). The planner prefers one period and the longest table and adds periods only when needed for accuracy. For a requested frequency the planner picks N and the timer divider (prescaler ×
   reload at 240 MHz) that minimise the frequency error; the error must be ≤ 0.1 % over the whole range and
   the UI shows the actual frequency.
 - Amplitude 0.1 … 3.0 Vpp in 0.1 V steps; offset = centre voltage in 0.1 V steps, clamped so the waveform
@@ -391,7 +390,7 @@ directly: unipolar, about 0 … 3.1 V (code 548…3548 measured as 0.44…2.72 V
   decade, e.g. 10 Hz between 1 kHz and 10 kHz), shown on the row.
 - Short-press Mode cycle gains a fourth control mode `Gen Freq | Amp`: wheel = frequency (same stepping,
   wheel press toggles fine), Up/Down = amplitude.
-- Bottom bar shows `G <freq>` while the output is on.
+- The top bar shows a `G` marker while the output is on; in the `Gen` control mode the mode label shows the live frequency and amplitude (e.g. `Gen 1kHz 2.0V`; `Gen 1.01kHz~2.0V` = fine steps).
 - No PC control of the generator (scope only).
 
 ### Testing
