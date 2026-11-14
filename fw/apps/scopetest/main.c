@@ -15,7 +15,7 @@
 #define CAP_N  (PLOT_W * 2)
 
 static uint8_t cap[CAP_N];
-static int range = 5, tdiv = 7, dc = 1, frozen = 0, gen = 2;
+static int range = 5, tdiv = 10, dc = 1, frozen = 0, gen = 2;
 static uint16_t offset = 0x834;
 static uint32_t notrig;
 

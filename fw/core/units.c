@@ -2,7 +2,7 @@
 
 const uint16_t vdiv_mv[NUM_VDIV] = {10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
 const uint32_t tdiv_ns[NUM_TDIV] = {
-    500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000,
+    50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000,
     1000000, 2000000, 5000000, 10000000, 20000000, 50000000,
 };
 
@@ -10,8 +10,14 @@ rate_cfg_t units_rate_for_tdiv(uint32_t tdiv) {
     /* timer ticks per sample = 240e6 * tdiv[s] / 120 = tdiv_ns / 500 */
     uint32_t div = tdiv / 500;
     uint32_t min_div = TIMER_CLK_HZ / MAX_RATE_HZ;
-    if (div < min_div) div = min_div;
     rate_cfg_t r;
+    if (div < min_div) {                                  /* faster than one stream can go */
+        r.psc = 0; r.arr = (uint16_t)(TIMER_CLK_HZ / ILV_RATE_HZ - 1u);
+        r.streams = div >= min_div / 2 ? 2 : 4;
+        r.rate_hz = ILV_RATE_HZ / 4u * r.streams;
+        return r;
+    }
+    r.streams = 1;
     if (div <= 65536) { r.psc = 0; r.arr = (uint16_t)(div - 1); }
     else { r.psc = (uint16_t)(div / 1000 - 1); r.arr = 999; }
     r.rate_hz = TIMER_CLK_HZ / div;
@@ -45,7 +51,7 @@ uint32_t fe_settle_ms(int dcodes) {
 }
 
 rate_cfg_t units_rate_for_hz(uint32_t hz) {
-    rate_cfg_t r = {0, 0, 0};
+    rate_cfg_t r = {0, 0, 0, 1};
     if (hz == 0 || TIMER_CLK_HZ % hz) return r;
     uint32_t div = TIMER_CLK_HZ / hz;
     for (uint32_t p = 1; p <= 65536u; p++) {

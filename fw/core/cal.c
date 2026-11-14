@@ -25,7 +25,9 @@ int cal_parse(const uint32_t *page, cal_t *c) {
     return 1;
 }
 
-int cal_set_for_rate(uint32_t rate_hz) { return rate_hz > 2400000u ? CAL_SET_MID : CAL_SET_SLOW; }
+int cal_set_for_rate(uint32_t rate_hz) {
+    return rate_hz > 12000000u ? CAL_SET_FAST : rate_hz > 2400000u ? CAL_SET_MID : CAL_SET_SLOW;
+}
 
 uint16_t cal_offset_pwm(const cal_t *c, int set, int range, int offset) {
     int lo = c->lo[set][range], hi = c->hi[set][range];
