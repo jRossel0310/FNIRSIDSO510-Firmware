@@ -64,7 +64,7 @@ static uint8_t ctl_zlp;
 static volatile uint32_t last_sof;
 static uint8_t cdc_tx_mem[CDC_TX_SIZE], cdc_rx_mem[CDC_RX_SIZE];
 static bytefifo_t cdc_tx, cdc_rx;
-static uint8_t tx2_busy, rx2_held, rx2_len, cdc_dtr;
+static uint8_t tx2_busy, tx2_zlp, rx2_held, rx2_len, cdc_dtr;
 static uint8_t rx2buf[64], tx2buf[64];
 static uint8_t ctl_out_left;                  /* EP0 OUT data stage bytes still expected */
 
@@ -100,7 +100,7 @@ static void pma_read(uint32_t off, uint8_t *b, int n) {
 static int rx_count(int ep) { return (int)(PMA((uint32_t)ep * 8u + 6u) & 0x3FFu); }
 
 static void cdc_reset_state(void) {
-    tx2_busy = rx2_held = 0; cdc_dtr = 0; ctl_out_left = 0;
+    tx2_busy = tx2_zlp = rx2_held = 0; cdc_dtr = 0; ctl_out_left = 0;
     bf_clear(&cdc_tx);                 /* consumer op: the ISR side owns cdc_tx.tail */
 }
 
@@ -147,6 +147,9 @@ static void ep2_pump(void) {
     if (!tx2_busy && cdc_dtr && bf_used(&cdc_tx)) {
         uint32_t n = bf_read(&cdc_tx, tx2buf, 64);
         pma_write(EP2_TX, tx2buf, (int)n); PMA(18) = n; ep_set_tx(2, ST_VALID); tx2_busy = 1;
+        tx2_zlp = (n == 64 && !bf_used(&cdc_tx));       /* end a full-packet burst with a ZLP */
+    } else if (!tx2_busy && cdc_dtr && tx2_zlp) {
+        tx2_zlp = 0; PMA(18) = 0; ep_set_tx(2, ST_VALID); tx2_busy = 1;
     }
 }
 
@@ -164,7 +167,7 @@ static void ep0_setup(void) {
     usb_resp_t r;
     pma_read(EP0_RX, s, 8);
     ep_clr_ctr_rx(0);
-    ctl_left = 0; ctl_zlp = 0;                          /* a new SETUP aborts any earlier IN transfer */
+    ctl_left = 0; ctl_zlp = 0; ctl_out_left = 0;                          /* a new SETUP aborts any earlier IN transfer */
     usb_std_setup(&dev, s, &r);
     if (r.bot_reset) {
         msc_reset(msc);
@@ -175,6 +178,11 @@ static void ep0_setup(void) {
         ep_clr_dtog_bits(1, 0x0040u); ep_set_tx(1, ST_NAK); tx_busy = 0;
     } else if (r.clear_halt_ep == 0x01) {               /* host resets its OUT toggle to DATA0 */
         ep_clr_dtog_bits(1, 0x4000u); ep_set_rx(1, ST_VALID);
+    }
+    if (r.clear_halt_ep == 0x82) {                      /* host resets its IN toggle to DATA0 */
+        ep_clr_dtog_bits(2, 0x0040u); ep_set_tx(2, ST_NAK); tx2_busy = 0; tx2_zlp = 0;
+    } else if (r.clear_halt_ep == 0x02) {               /* host resets its OUT toggle to DATA0 */
+        ep_clr_dtog_bits(2, 0x4000u); ep_set_rx(2, ST_VALID);
     }
     if (r.configured_changed) {
         ep_clr_dtog_bits(1, 0x4040u);

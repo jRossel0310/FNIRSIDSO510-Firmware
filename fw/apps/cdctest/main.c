@@ -35,11 +35,13 @@ int main(void) {
                 bench_t0 = millis(); bench_until = bench_t0 + 5000; bench_bytes = 0;
             }
             uint32_t len = 0; while (line.buf[len]) len++;
-            sp_put(usbd_cdc_txfifo(), SP_OK, (const uint8_t *)line.buf, len, 0, 0);
-            usbd_cdc_kick();
+            if (usbd_cdc_open()) {
+                sp_put(usbd_cdc_txfifo(), SP_OK, (const uint8_t *)line.buf, len, 0, 0);
+                usbd_cdc_kick();
+            }
         }
-        if (bench_until && usbd_cdc_open()) {
-            if ((int32_t)(millis() - bench_until) >= 0) bench_until = 0;
+        if (bench_until) {
+            if (!usbd_cdc_open() || (int32_t)(millis() - bench_until) >= 0) bench_until = 0;
             else {
                 uint8_t h[8];
                 for (int i = 0; i < 1024; i++) blk[i] = (uint8_t)(seq + (uint32_t)i);
