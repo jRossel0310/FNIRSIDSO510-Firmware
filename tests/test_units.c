@@ -39,4 +39,17 @@ void test_units(void) {
     CHECK_EQ(fe_settle_ms(100), 40 + 8 * 243);        /* 200 -> 8 doublings: ~2 s */
     CHECK_EQ(fe_settle_ms(-100), fe_settle_ms(100));
     CHECK_EQ(fe_settle_ms(200), 40 + 9 * 243);        /* full -100..+100 swing */
+    /* exact timer settings for logger rates: 240 MHz / ((psc+1)(arr+1)) */
+    rate_cfg_t q = units_rate_for_hz(500000);
+    CHECK_EQ(q.rate_hz, 500000); CHECK_EQ(q.psc, 0); CHECK_EQ(q.arr, 479);
+    q = units_rate_for_hz(10000);
+    CHECK_EQ(q.rate_hz, 10000); CHECK_EQ(q.psc, 0); CHECK_EQ(q.arr, 23999);
+    q = units_rate_for_hz(2000);                      /* 120000 ticks > 65536: psc 1 */
+    CHECK_EQ(q.rate_hz, 2000); CHECK_EQ(q.psc, 1); CHECK_EQ(q.arr, 59999);
+    q = units_rate_for_hz(1000);
+    CHECK_EQ(q.rate_hz, 1000); CHECK_EQ(q.psc, 3); CHECK_EQ(q.arr, 59999);
+    q = units_rate_for_hz(7);                          /* 240e6 not divisible by 7 */
+    CHECK_EQ(q.rate_hz, 0);
+    q = units_rate_for_hz(0);
+    CHECK_EQ(q.rate_hz, 0);
 }
