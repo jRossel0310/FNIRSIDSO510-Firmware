@@ -13,11 +13,11 @@ const char *save_capture(const uint8_t *rec, int n, const csv_meta_t *m, msc_t *
             WDT_CMD = 0xAAAA;
             if (millis() - t0 > 5000) return " Busy, retry  ";
         }
-        msc_set_present(msc, 0);                        /* host sees MEDIUM NOT PRESENT */
     }
+    msc_set_present(msc, 0);                            /* host sees MEDIUM NOT PRESENT (always, also when suspended) */
     int num = 0;
     cap_res_t r = capsave_write(rec, n, m, &num);
-    if (host) msc_set_present(msc, 1);                  /* host sees UNIT ATTENTION, re-reads */
+    msc_set_present(msc, 1);                             /* host sees UNIT ATTENTION, re-reads */
     if (r == CAP_FULL) return " Drive full   ";
     if (r != CAP_OK) return " Save failed  ";
     for (int i = 13; i >= 10; i--) { msg[i] = (char)('0' + num % 10); num /= 10; }
