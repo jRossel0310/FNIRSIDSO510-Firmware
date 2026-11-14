@@ -147,4 +147,16 @@ void test_measure(void) {
     in.freq_hz = 1500; in.mean_codes = 90;
     meas_avg_update(&a, &in, &out);
     CHECK_NEAR(out.mean_codes, 90.0, 1e-3); CHECK_EQ(a.n, 1);
+
+    /* a DC shift (same frequency and Vpp, mean moved by more than 10 % of Vpp + 2 codes) restarts too */
+    meas_avg_reset(&a);
+    in.freq_hz = 1500; in.vpp_codes = 100; in.mean_codes = 90; in.max_codes = 140;
+    meas_avg_update(&a, &in, &out); meas_avg_update(&a, &in, &out);
+    CHECK_EQ(a.n, 2);
+    in.mean_codes = 90 + 11; in.max_codes = 151;                 /* within 12 codes: keeps averaging */
+    meas_avg_update(&a, &in, &out);
+    CHECK_EQ(a.n, 3);
+    in.mean_codes = 130; in.max_codes = 180;                     /* 40 codes: restart */
+    meas_avg_update(&a, &in, &out);
+    CHECK_EQ(a.n, 1); CHECK_NEAR(out.mean_codes, 130.0, 1e-3); CHECK_NEAR(out.max_codes, 180.0, 1e-3);
 }

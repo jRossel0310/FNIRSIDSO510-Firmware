@@ -513,8 +513,9 @@ setting.
 
 - Menu row `Auto off`: Off / 5 / 10 / 30 minutes, default 10, saved with the settings.
 - The timer restarts on every key event. When it expires the scope powers down exactly as with the Power key
-  (settings are stored). It is postponed while frames are streaming, the logger runs, or a USB host is using the
-  drive.
+  (settings are stored). It never fires while a PC is connected (USB configured: the PC may be using the drive,
+  and on USB power the scope cannot switch itself off) or while the logger runs. A key held down counts as
+  activity.
 
 ### Settings file
 

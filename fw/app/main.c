@@ -554,7 +554,8 @@ int main(void) {
         int z = 0;
         int n = cfgfile_load(b, sizeof b);
         if (n > 0 && n <= (int)sizeof b && settings_unpack(b, (uint32_t)n, &st, &cal, &z)) {
-            settings_pack(cfg_saved, &st, &cal, z); cfg_have = 1;
+            settings_pack(cfg_saved, &st, &cal, z);
+            cfg_have = n == (int)SETTINGS_LEN;   /* an older-version file is rewritten at the next power-off */
             if (z) zeroed = 1;
         }
     }
@@ -572,19 +573,20 @@ int main(void) {
         usbd_poll();
         stream_poll();
         if (stream_mode() == STREAM_LOG) { idle_since = millis(); logger_step(); WDT_CMD = 0xAAAA; continue; }
-        {   /* auto shutdown after the idle time chosen in the menu; a host using the scope keeps it on */
-            uint8_t mins = auto_off_min[st.auto_off];
-            if (mins && millis() - idle_since >= (uint32_t)mins * 60000u) {
-                if (stream_mode() != STREAM_IDLE || (usbd_host() && usbd_configured() && msc_busy(&msc, millis())))
-                    idle_since = millis();
-                else power_down();
-            }
-        }
         int usb_on = stream_mode() == STREAM_FRAMES;
         if (usb_on != usb_marker) { usb_marker = (uint8_t)usb_on; ui_draw_usb(usb_on); }
         kev_t ev[8];
-        int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
-        if (ne) idle_since = millis();
+        uint32_t kraw = keys_read();
+        int ne = keys_update(&ks, kraw, millis(), ev, 8);
+        if (ne || kraw) idle_since = millis();          /* a key still held down counts as activity */
+        {   /* auto shutdown after the idle time chosen in the menu. Never while a PC is connected (it may be
+               reading or writing the drive, and on USB power the scope cannot switch itself off anyway). */
+            uint8_t mins = auto_off_min[st.auto_off];
+            if (mins && millis() - idle_since >= (uint32_t)mins * 60000u) {
+                if (stream_mode() != STREAM_IDLE || usbd_configured()) idle_since = millis();
+                else power_down();
+            }
+        }
         uint32_t chg = 0;
         for (int i = 0; i < ne; i++) chg |= control_handle(&st, ev[i]);
 

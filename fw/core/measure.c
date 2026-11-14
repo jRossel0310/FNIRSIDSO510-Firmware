@@ -62,7 +62,8 @@ void meas_avg_update(meas_avg_t *a, const meas_t *in, meas_t *out) {
     *out = *in;
     if (!in->valid || a->n == 0 ||
         absf(in->freq_hz - a->freq_hz) > 0.1f * a->freq_hz ||
-        absf(in->vpp_codes - a->vpp_codes) > 0.1f * a->vpp_codes + 2.0f) {
+        absf(in->vpp_codes - a->vpp_codes) > 0.1f * a->vpp_codes + 2.0f ||
+        absf(in->mean_codes - a->mean_codes) > 0.1f * a->vpp_codes + 2.0f) {   /* level moved (e.g. DC shift) */
         a->n = in->valid ? 1 : 0;
         a->freq_hz = in->freq_hz; a->duty_pct = in->duty_pct; a->vpp_codes = in->vpp_codes;
         a->max_codes = in->max_codes; a->min_codes = in->min_codes;
