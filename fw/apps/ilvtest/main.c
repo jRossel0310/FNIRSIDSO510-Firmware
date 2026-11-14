@@ -4,6 +4,7 @@
 //   W addr val        write a 32-bit register (flash controller refused)
 //   F range dc pwm    front end: range index, DC coupling, offset PWM
 //   G wave f amp off duty   generator (wave index, Hz, 0.1 V units)
+//   P c3dt pol        ADC clock phase override: TMR4 CH3 compare (ff = default) and polarity (1 = active low as stock, 0 = active high)
 //   C 0 psc arr       single-stream capture (DMA1 ch7), 1024 samples -> LOG index 9
 //   C 1 arr4 [c8 c5 c3 c1]  interleaved, stock sequence (TMR4 stopped during setup)
 //   C 2 arr4 [c8 c5 c3 c1]  interleaved, ADC clock kept running (slaves frozen through TMR4's TRGO)
@@ -61,6 +62,12 @@ void board_idle(void) { usbd_poll(); }
 static uint8_t buf[4 * NSTREAM];
 static uint16_t gtab[GEN_N_MAX];
 static uint32_t caps, timeouts;
+static uint32_t ph_c3dt = 0xFF, ph_pol = 1;   /* ADC clock phase override */
+
+static void phase_apply(void) {
+    if (ph_c3dt != 0xFF) T_C3DT(TMR4_BASE) = ph_c3dt;
+    T_CCTRL(TMR4_BASE) = (T_CCTRL(TMR4_BASE) & ~0x200u) | (ph_pol ? 0x200u : 0u);
+}
 
 static void slaves_off(void) {
     for (int q = 0; q < 4; q++) { T_IDEN(S[q].tmr) &= ~0x100u; T_CTRL1(S[q].tmr) &= ~1u; D_CTRL(S[q].dma) = 0; }
@@ -74,6 +81,7 @@ static void tmr4_clock(uint32_t arr4) {   /* ADC clock = 240 MHz / (arr4 + 1), 5
     T_DIV(TMR4_BASE) = 0;
     T_PR(TMR4_BASE) = arr4;
     T_C3DT(TMR4_BASE) = (arr4 >> 1) + 1u;
+    phase_apply();
     T_STCTRL(TMR4_BASE) |= 0x80u;         /* master/slave sync, as stock */
     T_CVAL(TMR4_BASE) = 0;
 }
@@ -81,7 +89,7 @@ static void tmr4_clock(uint32_t arr4) {   /* ADC clock = 240 MHz / (arr4 + 1), 5
 /* Returns 0, or -1 on timeout. cv = start counts of TMR8, TMR5, TMR3, TMR1 (stock 3, 1, 2, 0). */
 static int ilv_capture(int keep_clock, uint32_t arr4, const uint32_t *cv) {
     static uint32_t cur_arr4 = 0xFFFFFFFFu;
-    const uint32_t cvq[4] = {cv[2], cv[1], cv[3], cv[0]};   /* per stream q: TMR3, TMR5, TMR1, TMR8 */
+    const uint32_t cvq[4] = {cv[2] + 4u, cv[1] + 4u, cv[3] + 4u, cv[0] + 4u};   /* +4: first period is 8 ticks */   /* per stream q: TMR3, TMR5, TMR1, TMR8 */
     adc_abort();
     CRM_AHBEN |= 3u;                                         /* DMA1, DMA2 */
     CRM_APB1EN |= (1u << 1) | (1u << 2) | (1u << 3);         /* TMR3, TMR4, TMR5 */
@@ -89,6 +97,7 @@ static int ilv_capture(int keep_clock, uint32_t arr4, const uint32_t *cv) {
     slaves_off();
     if (keep_clock) {
         T_CTRL2(TMR4_BASE) &= ~0x70u;                        /* TRGO idle: slaves cannot count */
+        phase_apply();
         if (cur_arr4 != arr4) {
             tmr4_clock(arr4);
             T_SWEVT(TMR4_BASE) = 1;
@@ -110,9 +119,10 @@ static int ilv_capture(int keep_clock, uint32_t arr4, const uint32_t *cv) {
     REG32(0x400200A4) = (REG32(0x400200A4) & 0xFFFFFF00u) | 0x37u;     /* ch5 = 0x37 (TMR1 ovf) */
     for (int q = 0; q < 4; q++) {
         uint32_t t = S[q].tmr, d = S[q].dma;
-        T_CTRL1(t) = 0;
-        T_DIV(t) = 0; T_PR(t) = 3;
+        T_CTRL1(t) = 0x80u;                                  /* reload preload, as the driver */
+        T_DIV(t) = 0; REG32(t + 0x30) = 0; T_PR(t) = 7;
         T_SWEVT(t) = 1;
+        T_PR(t) = 3;
         T_STCTRL(t) = (T_STCTRL(t) & ~0x77u) | 5u | S[q].ts; /* gated by TMR4's TRGO */
         T_CVAL(t) = cvq[q];
         D_CTRL(d) = 0;
@@ -199,6 +209,9 @@ static void command(const char *l) {
         g.amp_dv = (uint8_t)hexarg(&p, 20); g.offset_dv = (uint8_t)hexarg(&p, 15); g.duty_pct = (uint8_t)hexarg(&p, 50);
         gen_clamp(&g); gen_set(&g);
         reply("G", g.wave, g.freq_hz);
+    } else if (c == 'P') {
+        ph_c3dt = hexarg(&p, 0xFF); ph_pol = hexarg(&p, 1);
+        reply("P", ph_c3dt, ph_pol);
     } else if (c == 'C') {
         uint32_t mode = hexarg(&p, 2);
         uint8_t h[8];
@@ -209,6 +222,7 @@ static void command(const char *l) {
             T_CTRL2(TMR4_BASE) = (T_CTRL2(TMR4_BASE) & ~0x70u) | 0x20u;
             adc_init();
             adc_set_rate((uint16_t)psc, (uint16_t)arr);
+            phase_apply(); delay_ms(2);
             adc_start(buf, NSTREAM);
             uint32_t t0 = millis();
             while (!adc_done()) if (millis() - t0 > 500) { adc_abort(); timeouts++; send(SP_ERR, (const uint8_t *)"timeout", 7, 0, 0); return; }
@@ -217,7 +231,8 @@ static void command(const char *l) {
             send(SP_LOG, h, 4, buf, NSTREAM);
         } else {
             uint32_t arr4 = hexarg(&p, 4), cv[4];
-            cv[0] = hexarg(&p, 3); cv[1] = hexarg(&p, 1); cv[2] = hexarg(&p, 2); cv[3] = hexarg(&p, 0);
+            cv[0] = hexarg(&p, 0xFFu); cv[1] = hexarg(&p, 1); cv[2] = hexarg(&p, 2); cv[3] = hexarg(&p, 0);
+            if (cv[0] == 0xFFu) { cv[0] = 0xFFFFFFFFu; cv[1] = 1; cv[2] = 2; cv[3] = 0; }   /* default: driver order, TMR8 last */
             if (ilv_capture(mode == 2, arr4, cv) < 0) {
                 timeouts++;
                 reply("T", D_CNT(S[0].dma) | D_CNT(S[1].dma) << 16, D_CNT(S[2].dma) | D_CNT(S[3].dma) << 16);

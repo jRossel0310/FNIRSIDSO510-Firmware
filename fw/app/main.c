@@ -131,6 +131,7 @@ static int cap_done(void) {
     const uint8_t *src[4];
     for (int k = 0; k < rc.streams; k++) src[k] = adc_ilv_stream(k);
     ilv_weave(rec, src, rc.streams, (uint32_t)(rec_n / rc.streams));
+    ilv_despike(rec, (uint32_t)rec_n);
     return 1;
 }
 
