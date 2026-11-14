@@ -19,6 +19,7 @@
 #define SYST_CSR     REG32(0xE000E010)
 #define SYST_RVR     REG32(0xE000E014)
 #define SYST_CVR     REG32(0xE000E018)
+#define NVIC_ISER(i) REG32(0xE000E100 + 4 * (i))
 #define NVIC_ICER(i) REG32(0xE000E180 + 4 * (i))
 #define NVIC_ICPR(i) REG32(0xE000E280 + 4 * (i))
 
@@ -71,6 +72,7 @@ extern uint32_t SystemCoreClock;
 void board_init(void);           // 240 MHz, SysTick 1 ms, IRQs from bootloader off, power latch
 uint32_t millis(void);
 void delay_ms(uint32_t ms);      // SysTick based, reloads watchdog
+void board_idle(void);           // weak, empty by default; called from delay_ms() (apps service USB here)
 void gpio_mode(uint32_t port, unsigned pin, uint32_t cfg);
 void keys_init(void);
 uint32_t keys_read(void);        // bit i set = key i pressed

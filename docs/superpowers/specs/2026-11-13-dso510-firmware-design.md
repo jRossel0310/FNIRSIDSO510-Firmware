@@ -1,7 +1,7 @@
 # DSO-510 replacement firmware — design
 
 Date: 2026-11-13
-Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14).
+Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run).
 
 ## Goal
 
@@ -52,7 +52,8 @@ One file per capture. A `#`-prefixed header with settings, then one row per samp
 # probe=<1|10>
 # trigger=<mode>,<edge>,<level_v>
 # trigger_index=<sample index of trigger point>
-# cal=<gain>,<offset> (per-range constants used)
+# triggered=<0|1>
+# cal=offset_pwm=<n>,volts_per_code=<v>
 time_s,volts,adc_code
 <t>,<v>,<code>
 ...
@@ -192,3 +193,78 @@ Every app build must implement power-off (lesson from `hello`).
 
 CSV/storage, USB, generator UI, measurements beyond the single line, persistence, roll mode,
 settings menu beyond the trigger/coupling/probe items, language/themes.
+
+## Sub-project 2: storage, CSV export, USB drive
+
+Approved in conversation 2026-11-13. Hardware facts: `NOTES.md` § SPI NOR flash and § first USB contact.
+
+### Storage
+
+- **Flash:** Puya 8 MiB SPI NOR (JEDEC 0x856017) on SPI3 (PC10/11/12, CS PD12), mode 0, 4 KiB erase
+  sectors, 256-byte program pages. Driver `fw/common/spiflash.[ch]`: read, 4 KiB sector erase, page
+  program, busy polling with timeouts.
+- **Write guard:** every erase/program address must be `< 0x500000` (the 5 MiB user volume), checked
+  in the driver itself and unit-tested. The 3 MiB system volume at 0x500000 (stock UI graphics) is
+  never written, so the stock firmware keeps working after a reflash.
+- **File system:** FatFs (ChaN, vendored unmodified in `fw/third_party/fatfs/` with its licence),
+  one volume = the existing FAT12 user volume at flash offset 0: 4096-byte sectors, 1280 sectors.
+  No reformatting; stock folders (`LOGO`, `Screenshot file`, …) are left alone.
+- **Block layer:** `disk_read/disk_write` map 4 KiB FAT sectors 1:1 onto flash erase sectors
+  (write = erase + 16 page programs). Shared by FatFs and USB so both see the same bytes.
+
+### CSV save (long-press Run)
+
+- Freezes the current record, then writes `/CSV/CAP<nnnn>.CSV`, `nnnn` = 1 + highest existing number
+  (folder created if missing; 9999 max → "Drive full").
+- Format as in § CSV format. Values: `time_s` = (i − trigger_index) / sample_rate with 9 decimals,
+  `volts` with 4 decimals (probe factor applied), `adc_code` 0–255. `cal=` line gives the offset PWM
+  and V/div actually used. The whole record (4 screens, ≤ 4800 rows, ≈ 120 KB) is saved.
+- `triggered=1`: a trigger was found at `trigger_index`. `triggered=0`: an untriggered Auto capture;
+  `trigger_index` is then the screen trigger position (pre-trigger samples), so `time_s` = 0 marks
+  where the trigger would sit on screen, not a level crossing.
+- File data goes to FatFs in whole 4096-byte chunks (one FAT sector each; only the tail is shorter),
+  with `FF_FS_TINY 0`, so the FAT is written once at close instead of once per chunk.
+- The formatter lives in `fw/core/csv.[ch]` (no printf; host-tested), producing the file in chunks.
+- Toasts (14 columns): " Saved CAPnnnn", " Drive full   ", " Save failed  " (any FatFs/flash error),
+  " Busy, retry  " (host did not go idle). Target ≤ 2 s.
+- A long Power press during the save waits still switches the scope off.
+- Saving does not change the scope's run/stop state after it finishes.
+
+### USB drive (auto-mount)
+
+- USB FS device, Mass Storage Class / Bulk-Only / SCSI transparent, 64-byte bulk endpoints, 48 MHz
+  USB clock = HICK 48 MHz trimmed to the host's SOF by the ACC (as stock). Interrupt driven (IRQ20):
+  bus reset, EP0 (incl. SET_ADDRESS right after its status stage) and EP1 packets are handled in the
+  ISR; 4 KiB block reads/writes run in main context. Exposes the 5 MiB user volume only, as 1280 × 4096-byte blocks (as stock),
+  removable (RMB=1). Own VID:PID strings are not required; reuse stock `2e3c:5720`.
+- **Auto-mount:** the device is enabled with the D+ pull-up on except during a save's soft-disconnect and at power-off. A computer enumerates it; a
+  charger never does, so nothing happens there. The scope keeps running normally while connected.
+- **Ownership while connected:** the host owns the volume (read/write). The scope's FatFs volume is
+  unmounted while the host is attached.
+- **Save while connected (soft-disconnect):** if a host has configured the device (also while the bus
+  is suspended): wait until the host has no command in progress and has issued no WRITE for ≥ 1 s
+  (max 5 s, else " Busy, retry  "; the wait ends early if the host goes away). Then report MEDIUM
+  NOT PRESENT (02/3A/00; a WRITE still in progress fails and the rest of its data is discarded),
+  switch the D+ pull-up off (USB_CFG bit 1) for ≥ 0.5 s, mount FatFs, write the file, unmount,
+  report the medium present again (one UNIT ATTENTION 06/28/00) and switch D+ back on. The host
+  sees a real unplug + re-plug, drops its mount and FAT cache, re-enumerates and mounts afresh; this
+  is the only mechanism both Linux and Windows honour without depending on their TUR poll interval.
+  Cost: an OS "device disconnected" notification per save while plugged in.
+- Without a configured host the save only brackets the write with medium not present / present.
+- Power-off switches the D+ pull-up off first, so a host on USB power sees an unplug, not a dead drive.
+- Detach (USB suspend or no SOF for 1 s) returns ownership to the scope.
+- Linux is the primary test host; Windows behaviour is designed for (stock used the same 4 KiB block
+  geometry with Windows) and checked when available.
+
+### Testing
+
+- Host tests: CSV formatter (header, rounding, negative times, chunking), next-file-number logic,
+  SCSI command handler against a RAM disk (INQUIRY, READ CAPACITY, READ/WRITE(10), TEST UNIT READY,
+  REQUEST SENSE, MODE SENSE, PREVENT/ALLOW, eject/re-insert sense sequence), flash write guard.
+- On device: save several captures; files open and plot; auto-mount on Linux; save while mounted shows
+  the new file; plain charger does nothing; stock firmware still boots and shows its files after
+  reflashing it.
+
+### Out of scope for sub-project 2
+
+Live streaming (sub-project 4), generator UI (3), screenshots (dropped), deleting files on the scope.

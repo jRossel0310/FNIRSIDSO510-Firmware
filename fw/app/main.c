@@ -13,10 +13,23 @@
 #include "autoset.h"
 #include "keys.h"
 #include "ui.h"
+#include "spiflash.h"
+#include "flashmap.h"
+#include "vol.h"
+#include "msc.h"
+#include "usbd.h"
+#include "save.h"
 
 #define REC_MAX (4 * 1200)
 
-static uint8_t rec[REC_MAX];
+static uint8_t recbuf[2][REC_MAX];
+static uint8_t *rec = recbuf[0];        /* buffer being captured into */
+static uint8_t *shown;                  /* last processed capture (on screen) */
+static int shown_n;
+static csv_meta_t shown_meta;           /* settings the shown capture was taken with */
+static msc_t msc;
+static const msc_disk_t vol_disk = {vol_read, vol_write, USER_VOL_SECTORS};
+void board_idle(void) { usbd_poll(); }
 static span_t spans[PLOT_W];
 static cal_t cal;
 static scope_state_t st;
@@ -82,6 +95,7 @@ static int capture_blocking(void) {
     uint32_t t0 = millis(), lim = capture_timeout_ms();
     while (!adc_done()) {
         WDT_CMD = 0xAAAA;
+        board_idle();
         if (millis() - t0 > lim) { adc_abort(); toast(" ADC timeout  ", 2000); return -1; }
     }
     return 0;
@@ -104,11 +118,24 @@ static void process_capture(void) {
     if (t >= 0) start = t - pre;
     else if (st.trig_mode == TRIG_AUTO) start = 0;
     else return;                                    /* Normal/Single: keep previous trace */
+    shown = rec; shown_n = rec_n;
+    shown_meta.rate_hz = rc.rate_hz;
+    shown_meta.vdiv_mv = vdiv_mv[st.vdiv];
+    shown_meta.coupling_dc = st.coupling_dc;
+    shown_meta.probe_x10 = st.probe_x10;
+    shown_meta.trig_mode = st.trig_mode;
+    shown_meta.edge = st.edge;
+    shown_meta.zero_code = (int16_t)(ADC_CENTER + st.offset);
+    shown_meta.trig_level_code = st.trig_level;
+    shown_meta.trig_index = t >= 0 ? t : start + pre;   /* untriggered Auto: the screen trigger position */
+    shown_meta.triggered = t >= 0;
+    shown_meta.offset_pwm = fe_pwm;
+    rec = (rec == recbuf[0]) ? recbuf[1] : recbuf[0];
     if (st.trig_mode == TRIG_SINGLE) { st.run = 0; draw_bars(); }
-    render_spans(rec, rec_n, start, ((sps << 8) + PLOT_W / 2) / PLOT_W, spans, PLOT_W);
+    render_spans(shown, shown_n, start, ((sps << 8) + PLOT_W / 2) / PLOT_W, spans, PLOT_W);
     ui_draw_trace(spans);
     meas_t raw;
-    measure(rec, rec_n, rc.rate_hz, &raw);         /* whole record (4 screens): more periods, steadier */
+    measure(shown, shown_n, rc.rate_hz, &raw);         /* whole record (4 screens): more periods, steadier */
     meas_avg_update(&meas_avg, &raw, &last_meas);
     have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10;
     ui_draw_meas(&st, &last_meas);
@@ -222,7 +249,7 @@ static void poll_power(void) {
 }
 
 static void wait_power_aware(uint32_t ms) {
-    for (uint32_t t0 = millis(); millis() - t0 < ms; ) { WDT_CMD = 0xAAAA; poll_power(); }
+    for (uint32_t t0 = millis(); millis() - t0 < ms; ) { WDT_CMD = 0xAAAA; board_idle(); poll_power(); }
 }
 
 /* Trace mean in 1/16 ADC codes with the offset PWM at pwm, after the PA7 filter has settled
@@ -284,6 +311,7 @@ static void do_autozero(void) {
 static void power_down(void) {
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);
+    usbd_detach();               /* a host sees an unplug, not a dead drive */
     power_off();
     for (;;) WDT_CMD = 0xAAAA;   /* on USB power the scope stays alive; keep the watchdog quiet */
 }
@@ -300,6 +328,9 @@ int main(void) {
     adc_init();
     dac2_bias_init();
     cal_out_init();
+    spiflash_init();
+    msc_init(&msc, &vol_disk);
+    usbd_init(&msc);
     gen_sine_init(2399);          /* 1 kHz test sine until sub-project 3 adds the generator UI */
     apply_time();
     redraw_all();
@@ -307,6 +338,7 @@ int main(void) {
     if (!cal.valid) toast("No factory cal", 3000);
 
     for (;;) {
+        usbd_poll();
         kev_t ev[8];
         int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
         uint32_t chg = 0;
@@ -325,7 +357,15 @@ int main(void) {
             if (chg & (CHG_TRIG | CHG_FE)) ui_draw_markers(&st);
             if ((chg & CHG_MENU) && st.menu_open) ui_draw_menu(&st);
         }
-        if (chg & ACT_SAVE) toast(" CSV: step 2  ", 1500);
+        if (chg & ACT_SAVE) {
+            if (!have_trace || !shown) toast(" No capture   ", 1500);
+            else {
+                adc_abort(); armed = 0;
+                toast(" Saving...    ", 60000);
+                const char *r = save_capture(shown, shown_n, &shown_meta, &msc, poll_power);
+                toast(r, 2500);
+            }
+        }
         if (chg & ACT_AUTOSET) do_autoset();
         if (chg & ACT_AUTOZERO) do_autozero();
 

@@ -2,12 +2,16 @@
 #include "board.h"
 #include "lcd.h"
 
+/* Drop the D+ pull-up (USB_CFG bit 1) directly so a USB host sees an unplug rather than a dead device.
+   Not usbd_detach(): fault context must not take locks or touch msc state. */
+#define USB_DP_OFF() (REG32(0x40005C60) |= 2u)
+
 void hardfault_report(uint32_t *frame) {
     char b[12];
     if (!lcd_ready) {                       /* fault before lcd_init: LCD access would fault again */
         for (;;) {
             WDT_CMD = 0xAAAA;
-            if (keys_read() & KEY_BIT(KEY_POWER)) power_off();
+            if (keys_read() & KEY_BIT(KEY_POWER)) { USB_DP_OFF(); power_off(); }
         }
     }
     backlight(1);
@@ -27,7 +31,7 @@ void hardfault_report(uint32_t *frame) {
     lcd_text(1, 11, "to switch off.", C_WHITE, C_RED);
     for (;;) {
         WDT_CMD = 0xAAAA;
-        if (keys_read() & KEY_BIT(KEY_POWER)) power_off();
+        if (keys_read() & KEY_BIT(KEY_POWER)) { USB_DP_OFF(); power_off(); }
     }
 }
 

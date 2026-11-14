@@ -27,6 +27,7 @@ void SVC_Handler(void) WEAK;
 void DebugMon_Handler(void) WEAK;
 void PendSV_Handler(void) WEAK;
 void SysTick_Handler(void) WEAK;
+void USB_LP_IRQHandler(void) WEAK;             /* IRQ20: USBFS low priority (shared with CAN1 RX0) */
 
 __attribute__((section(".isr_vector"), used))
 const void *const vectors[16 + 84] = {
@@ -41,9 +42,20 @@ const void *const vectors[16 + 84] = {
     [12] = DebugMon_Handler,
     [14] = PendSV_Handler,
     [15] = SysTick_Handler,
-    [16 ... 16 + 84 - 1] = Default_Handler,
+    [16 ... 16 + 19] = Default_Handler,
+    [16 + 20] = USB_LP_IRQHandler,
+    [16 + 21 ... 16 + 84 - 1] = Default_Handler,
 };
 
 /* Minimal libc pieces GCC may emit calls to (we link with -nostdlib). */
 void *memset(void *d, int c, size_t n) { unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
 void *memcpy(void *d, const void *s, size_t n) { unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
+int memcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *p = a, *q = b;
+    for (; n; n--, p++, q++) if (*p != *q) return *p - *q;
+    return 0;
+}
+char *strchr(const char *s, int c) {
+    for (;; s++) { if (*s == (char)c) return (char *)s; if (!*s) return 0; }
+}
+size_t strlen(const char *s) { const char *p = s; while (*p) p++; return (size_t)(p - s); }

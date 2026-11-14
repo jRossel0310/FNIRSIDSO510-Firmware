@@ -17,9 +17,11 @@ static volatile uint32_t g_ms;
 void SysTick_Handler(void) { g_ms++; }
 uint32_t millis(void) { return g_ms; }
 
+__attribute__((weak)) void board_idle(void) { }
+
 void delay_ms(uint32_t ms) {
     uint32_t t0 = g_ms;
-    while (g_ms - t0 < ms) WDT_CMD = 0xAAAA;   // reload watchdog in case the bootloader started it
+    while (g_ms - t0 < ms) { WDT_CMD = 0xAAAA; board_idle(); }   // watchdog + background work
 }
 
 static void clock_init_240mhz(void) {
