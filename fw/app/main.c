@@ -51,7 +51,8 @@ static uint32_t toast_until, armed_at, next_batt, settle_until;
 #define FE_SETTLE_MS 40       /* range relays / PA7 offset PWM filter */
 static int have_trace;        /* spans[] / last_meas hold a drawn trace */
 static meas_t last_meas;
-static int8_t trace_vdiv; static uint8_t trace_x10;   /* scale last_meas was taken at */
+static int8_t trace_vdiv; static uint8_t trace_x10; static int16_t trace_off;   /* scale and zero last_meas was taken at */
+static uint32_t idle_since;   /* last key activity (auto shutdown) */
 static meas_avg_t meas_avg;
 static uint8_t zeroed, zero_failed;
 static uint8_t cfg_saved[SETTINGS_LEN];   /* settings blob as stored on the flash */
@@ -188,7 +189,7 @@ static void process_capture(void) {
     meas_t raw;
     measure(shown, shown_n, rc.rate_hz, &raw);         /* whole record (4 screens): more periods, steadier */
     meas_avg_update(&meas_avg, &raw, &last_meas);
-    have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10;
+    have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10; trace_off = st.offset;
     ui_draw_meas(&st, &last_meas);
     stream_frame(shown, shown_n, &shown_meta);
 }
@@ -560,6 +561,7 @@ int main(void) {
     msc_init(&msc, &vol_disk);
     usbd_init(&msc);
     stream_init(&hooks);
+    idle_since = millis();
     gendac_init(); gen_apply();
     apply_time();
     redraw_all();
@@ -569,11 +571,20 @@ int main(void) {
     for (;;) {
         usbd_poll();
         stream_poll();
-        if (stream_mode() == STREAM_LOG) { logger_step(); WDT_CMD = 0xAAAA; continue; }
+        if (stream_mode() == STREAM_LOG) { idle_since = millis(); logger_step(); WDT_CMD = 0xAAAA; continue; }
+        {   /* auto shutdown after the idle time chosen in the menu; a host using the scope keeps it on */
+            uint8_t mins = auto_off_min[st.auto_off];
+            if (mins && millis() - idle_since >= (uint32_t)mins * 60000u) {
+                if (stream_mode() != STREAM_IDLE || (usbd_host() && usbd_configured() && msc_busy(&msc, millis())))
+                    idle_since = millis();
+                else power_down();
+            }
+        }
         int usb_on = stream_mode() == STREAM_FRAMES;
         if (usb_on != usb_marker) { usb_marker = (uint8_t)usb_on; ui_draw_usb(usb_on); }
         kev_t ev[8];
         int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
+        if (ne) idle_since = millis();
         uint32_t chg = 0;
         for (int i = 0; i < ne; i++) chg |= control_handle(&st, ev[i]);
 
@@ -585,7 +596,7 @@ int main(void) {
                          fe_settle_need = 0; settle_for(need); }
         if (chg & CHG_FE) {
             adc_abort(); armed = 0; apply_fe(); settle_for(FE_SETTLE_MS);
-            if (st.vdiv != trace_vdiv || st.probe_x10 != trace_x10) have_trace = 0;   /* held Vpp would be mis-scaled */
+            if (st.vdiv != trace_vdiv || st.probe_x10 != trace_x10 || st.offset != trace_off) have_trace = 0;   /* held volts would be mis-scaled / off-zero */
         }
         if (chg & CHG_RUN) { adc_abort(); armed = 0; }
         if (chg & CHG_GEN) gen_apply();
@@ -596,6 +607,7 @@ int main(void) {
             if ((chg & CHG_MENU) && st.menu_open) ui_draw_menu(&st);
             if ((chg & CHG_GENPAGE) && st.gen_open) ui_draw_gen(&st, gen_pl.actual_mhz);
         }
+        if ((chg & CHG_MEAS) && !(chg & CHG_SCREEN) && have_trace) ui_draw_meas(&st, &last_meas);
         if (chg & ACT_SAVE) {
             if (!have_trace || !shown) toast(" No capture   ", 1500);
             else {
