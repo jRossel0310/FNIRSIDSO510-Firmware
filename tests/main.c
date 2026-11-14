@@ -16,6 +16,7 @@ void test_capname(void);
 void test_csv(void);
 void test_capsave(void);
 void test_msc(void);
+void test_usb_std(void);
 
 int main(void) {
     test_fmt();
@@ -33,6 +34,7 @@ int main(void) {
     test_csv();
     test_capsave();
     test_msc();
+    test_usb_std();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }
