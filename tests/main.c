@@ -12,6 +12,7 @@ void test_control(void);
 void test_autoset(void);
 void test_flashmap(void);
 void test_capname(void);
+void test_csv(void);
 
 int main(void) {
     test_fmt();
@@ -25,6 +26,7 @@ int main(void) {
     test_autoset();
     test_flashmap();
     test_capname();
+    test_csv();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }
