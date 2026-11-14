@@ -71,6 +71,7 @@ extern uint32_t SystemCoreClock;
 void board_init(void);           // 240 MHz, SysTick 1 ms, IRQs from bootloader off, power latch
 uint32_t millis(void);
 void delay_ms(uint32_t ms);      // SysTick based, reloads watchdog
+void board_idle(void);           // weak, empty by default; called from delay_ms() (apps service USB here)
 void gpio_mode(uint32_t port, unsigned pin, uint32_t cfg);
 void keys_init(void);
 uint32_t keys_read(void);        // bit i set = key i pressed
