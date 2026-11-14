@@ -30,7 +30,9 @@ void test_usb_std(void) {
     CHECK_EQ(c[25 + 2], 0x01);
     /* IAD + CDC */
     CHECK_EQ(c[32], 8); CHECK_EQ(c[33], 0x0B); CHECK_EQ(c[34], 1); CHECK_EQ(c[35], 2); CHECK_EQ(c[36], 0x02);
+    CHECK_EQ(c[37], 0x02); CHECK_EQ(c[38], 0x00);              /* IAD function protocol: none */
     CHECK_EQ(c[40], 9); CHECK_EQ(c[41], 4); CHECK_EQ(c[42], 1); CHECK_EQ(c[45], 0x02); CHECK_EQ(c[46], 0x02);
+    CHECK_EQ(c[47], 0x00);                     /* comm protocol 0, not AT: ModemManager leaves it alone */
     CHECK_EQ(c[49 + 1], 0x24); CHECK_EQ(c[49 + 2], 0x00);       /* header */
     CHECK_EQ(c[54 + 2], 0x01); CHECK_EQ(c[54 + 4], 2);          /* call management -> data iface 2 */
     CHECK_EQ(c[59 + 2], 0x02); CHECK_EQ(c[59 + 3], 0x02);       /* ACM: line coding + control line */

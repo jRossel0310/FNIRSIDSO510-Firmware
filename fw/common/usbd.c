@@ -195,7 +195,11 @@ static void ep0_setup(void) {
         ep_set_rx(2, ST_VALID); ep_set_tx(2, ST_NAK);
         cdc_reset_state();
     }
-    if (r.dtr_changed) { cdc_dtr = dev.dtr; if (!cdc_dtr) { bf_clear(&cdc_tx); } }
+    if (r.dtr_changed) {                                /* either edge: a session never gets the */
+        cdc_dtr = dev.dtr;                              /* previous one's bytes (consumer-side ops) */
+        bf_clear(&cdc_tx);
+        ep_set_tx(2, ST_NAK); tx2_busy = 0; tx2_zlp = 0;   /* drop an armed, not yet sent IN packet */
+    }
     if (r.set_address) { pending_addr = 1; addr = r.new_address; }
     switch (r.act) {
     case USB_DATA_IN: {

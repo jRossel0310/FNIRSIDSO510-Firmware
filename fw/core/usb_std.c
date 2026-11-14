@@ -11,8 +11,8 @@ static const uint8_t cfg_desc[98] = {
     9, 4, 0, 0, 2, 0x08, 0x06, 0x50, 0,              /* interface 0: MSC, SCSI transparent, BOT */
     7, 5, 0x81, 0x02, 64, 0, 0,                      /* EP 0x81 IN bulk 64 */
     7, 5, 0x01, 0x02, 64, 0, 0,                      /* EP 0x01 OUT bulk 64 */
-    8, 0x0B, 1, 2, 0x02, 0x02, 0x01, 0,             /* IAD: CDC ACM, interfaces 1-2 */
-    9, 4, 1, 0, 1, 0x02, 0x02, 0x01, 0,              /* interface 1: CDC comm, AT commands */
+    8, 0x0B, 1, 2, 0x02, 0x02, 0x00, 0,             /* IAD: CDC ACM, interfaces 1-2, no AT protocol */
+    9, 4, 1, 0, 1, 0x02, 0x02, 0x00, 0,              /* interface 1: CDC comm, protocol 0: not a modem */
     5, 0x24, 0x00, 0x10, 0x01,                       /* CDC header */
     5, 0x24, 0x01, 0x00, 2,                          /* CDC call management: data iface 2 */
     4, 0x24, 0x02, 0x02,                             /* CDC ACM: line coding + control line */
