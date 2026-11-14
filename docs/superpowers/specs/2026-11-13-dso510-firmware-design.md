@@ -294,7 +294,7 @@ after a bad CRC. Multi-byte payload fields are little-endian.
 |---|---|---|
 | 0x01 | INFO | ASCII `key=value` lines: `fw=<version>`, `mode=<idle\|frames\|log>`, `rates=<comma list>` |
 | 0x02 | FRAME | meta (below) + `n u16` + n raw ADC codes |
-| 0x03 | LOGMETA | `rate_hz u32`, `vdiv_mv u16`, `probe_x10 u8`, `coupling_dc u8`, `zero_code i16` |
+| 0x03 | LOGMETA | `rate_hz u32`, `vdiv_mv u16`, `probe_x10 u8`, `coupling_dc u8`, `zero_code i16`, `offset_pwm u16` |
 | 0x04 | LOG | `first_index u32` (running sample counter since LOG start) + raw ADC codes |
 | 0x05 | DROP | `first_index u32`, `count u32`: samples lost before index `first_index` |
 | 0x06 | OK | ASCII echo of the accepted command |

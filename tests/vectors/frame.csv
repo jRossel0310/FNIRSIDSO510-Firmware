@@ -1,0 +1,18 @@
+# DSO-510 custom firmware 0.3.0
+# sample_rate_hz=600000
+# volts_per_div=0.5000
+# coupling=DC
+# probe=1
+# trigger=Auto,rising,0.5800
+# trigger_index=3
+# triggered=1
+# cal=offset_pwm=1630,volts_per_code=0.020000
+time_s,volts,adc_code
+-0.000005000,0.0000,46
+-0.000003333,0.5000,71
+-0.000001667,1.0000,96
+0.000000000,1.5000,121
+0.000001667,2.0000,146
+0.000003333,1.5000,121
+0.000005000,1.0000,96
+0.000006667,0.5000,71

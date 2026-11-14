@@ -18,7 +18,11 @@ build/tests: $(SRCS) $(HDRS) build/ff.o | build
 build:
 	mkdir -p build
 
+vectors: build/tests
+	mkdir -p vectors
+	WRITE_VECTORS=1 ./build/tests
+
 clean:
 	rm -rf build
 
-.PHONY: run test clean
+.PHONY: run test vectors clean
