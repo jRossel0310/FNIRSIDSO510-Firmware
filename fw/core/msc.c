@@ -8,22 +8,43 @@ static uint32_t le32(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (ui
 
 static void set_sense(msc_t *m, uint8_t k, uint8_t a, uint8_t q) { m->key = k; m->asc = a; m->ascq = q; }
 
-void msc_reset(msc_t *m) { m->state = S_IDLE; m->io = 0; }
+static void lock(const msc_t *m) { if (m->lock) m->lock(); }
+static void unlock(const msc_t *m) { if (m->unlock) m->unlock(); }
+
+/* inflight is left alone: an I/O still running keeps the ISR out until msc_task has finished it. */
+void msc_reset(msc_t *m) { m->state = S_IDLE; m->io = 0; m->gen++; }
 
 void msc_init(msc_t *m, const msc_disk_t *d) {
-    m->disk = d; m->present = 1; m->attention = 0; m->wrote = 0;
+    m->disk = d; m->lock = 0; m->unlock = 0;
+    m->present = 1; m->attention = 0; m->wrote = 0; m->inflight = 0; m->gen = 0;
     set_sense(m, 0, 0, 0);
     msc_reset(m);
 }
 
+void msc_set_lock(msc_t *m, void (*lk)(void), void (*ul)(void)) { m->lock = lk; m->unlock = ul; }
+
+/* WRITE data still to come (incl. a received block not yet written) is discarded; CSW failed. */
+static void abort_write(msc_t *m) {
+    set_sense(m, 2, 0x3A, 0);
+    m->status = 1; m->residue = m->hi;
+    m->left = m->nblk * MSC_BLOCK - m->pos;
+    m->io = 0; m->gen++;
+    m->state = m->left ? S_DISCARD : S_STATUS;
+}
+
 void msc_set_present(msc_t *m, int present) {
+    lock(m);
     if (present && !m->present) m->attention = 1;
     m->present = (uint8_t)(present != 0);
+    if (!present && m->state == S_WRITE && !m->inflight) abort_write(m);
+    unlock(m);
 }
 
 int msc_busy(const msc_t *m, uint32_t now_ms) {
-    if (m->state != S_IDLE) return 1;
-    return m->wrote && (now_ms - m->last_write_ms) < 1000u;
+    lock(m);
+    int b = m->state != S_IDLE || (m->wrote && (now_ms - m->last_write_ms) < 1000u);
+    unlock(m);
+    return b;
 }
 
 /* Fail the command: fill/discard the data phase, CSW status 1, residue = Hi. */
@@ -116,6 +137,7 @@ static void command(msc_t *m, const uint8_t *cb, int dir_in) {
 }
 
 int msc_rx(msc_t *m, const uint8_t *pkt, int len, uint32_t now_ms) {
+    if (m->inflight) return -1;                          /* msc_task owns buf/state until the I/O ends */
     switch (m->state) {
     case S_IDLE:
         if (len != 31 || le32(pkt) != 0x43425355u || (pkt[14] & 0x1F) == 0 || (pkt[14] & 0x1F) > 16) return 0;
@@ -139,35 +161,40 @@ int msc_rx(msc_t *m, const uint8_t *pkt, int len, uint32_t now_ms) {
 }
 
 void msc_task(msc_t *m) {
-    if (m->io == 1) {
+    lock(m);
+    uint8_t io = m->io, gen = m->gen;
+    uint32_t lba = m->lba;
+    if (io == 2 && !m->present) { abort_write(m); io = 0; }   /* medium removed while writing */
+    if (io) m->inflight = 1;
+    unlock(m);
+    if (!io) return;
+    int err = io == 1 ? m->disk->read(lba, m->buf) : m->disk->write(lba, m->buf);   /* USB IRQ live */
+    lock(m);
+    m->inflight = 0;
+    if (m->gen == gen && m->io == io) {                  /* not reset/aborted meanwhile */
         m->io = 0;
-        if (m->disk->read(m->lba, m->buf)) {             /* unrecovered read error: zero-fill rest */
+        if (io == 1 && err) {                            /* unrecovered read error: zero-fill the rest */
             set_sense(m, 3, 0x11, 0);
-            m->status = 1; m->left = m->nblk * MSC_BLOCK; m->residue = m->hi; m->state = S_ZERO_IN;
-            return;
-        }
-        m->len = MSC_BLOCK; m->pos = 0;
-    } else if (m->io == 2) {
-        m->io = 0;
-        if (!m->present) {                               /* medium removed while writing */
-            set_sense(m, 2, 0x3A, 0);
-            m->status = 1; m->residue = m->hi; m->left = (m->nblk - 1) * MSC_BLOCK;
-            m->state = m->left ? S_DISCARD : S_STATUS;
-            return;
-        }
-        if (m->disk->write(m->lba, m->buf)) {            /* write error: discard the rest */
+            m->status = 1; m->left = m->nblk * MSC_BLOCK;
+            m->residue = m->left;                        /* Hi minus the bytes already sent */
+            m->state = S_ZERO_IN;
+        } else if (io == 1) {
+            m->len = MSC_BLOCK; m->pos = 0;
+        } else if (err) {                                /* write error: discard the rest */
             set_sense(m, 3, 0x0C, 0);
             m->status = 1; m->residue = m->hi; m->left = (m->nblk - 1) * MSC_BLOCK;
             m->state = m->left ? S_DISCARD : S_STATUS;
-            return;
+        } else {
+            m->lba++; m->pos = 0;
+            if (--m->nblk == 0) m->state = S_STATUS;
         }
-        m->lba++; m->pos = 0;
-        if (--m->nblk == 0) m->state = S_STATUS;
     }
+    unlock(m);
 }
 
 int msc_tx(msc_t *m, uint8_t *pkt) {
     uint32_t n;
+    if (m->inflight) return -1;
     switch (m->state) {
     case S_IN:
         n = m->len - m->pos > MSC_PKT ? MSC_PKT : m->len - m->pos;

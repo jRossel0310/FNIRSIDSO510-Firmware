@@ -44,7 +44,7 @@ int main(void) {
             uint32_t t0 = millis();
             while (keys_read() & KEY_BIT(KEY_POWER)) {
                 usbd_poll();
-                if (millis() - t0 > 1000) { backlight(0); power_off(); for (;;) { usbd_poll(); WDT_CMD = 0xAAAA; } }
+                if (millis() - t0 > 1000) { backlight(0); usbd_detach(); power_off(); for (;;) WDT_CMD = 0xAAAA; }
             }
         }
         WDT_CMD = 0xAAAA;

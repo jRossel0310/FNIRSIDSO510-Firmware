@@ -3,11 +3,34 @@
 
 #define NBLK 8
 static uint8_t disk[NBLK][MSC_BLOCK];
-static int fail_write;
-static int rd(uint32_t lba, uint8_t *b) { memcpy(b, disk[lba], MSC_BLOCK); return 0; }
-static int wr(uint32_t lba, const uint8_t *b) { if (fail_write) return -1; memcpy(disk[lba], b, MSC_BLOCK); return 0; }
-static const msc_disk_t D = {rd, wr, NBLK};
+static int fail_write, fail_read_lba = -1;
 static msc_t M;
+/* "ISR" probe run from inside the block I/O, i.e. while msc_task's read/write is in flight */
+static int lock_depth, lock_max, io_lock_depth = -1, isr_rx = 99, isr_tx = 99, isr_reset;
+static void isr_probe(void) {
+    uint8_t pkt[64] = {0x55, 0x53, 0x42, 0x43};
+    io_lock_depth = lock_depth;
+    if (isr_reset) {                                     /* BOT reset, then the host's next CBW (TUR) */
+        msc_reset(&M);
+        pkt[8] = 0; pkt[12] = 0; pkt[14] = 6;
+    }
+    isr_rx = msc_rx(&M, pkt, 31, 0);
+    isr_tx = msc_tx(&M, pkt);
+}
+static int probe_io;
+static int rd(uint32_t lba, uint8_t *b) {
+    if (probe_io) isr_probe();
+    memcpy(b, disk[lba], MSC_BLOCK);
+    return (int)lba == fail_read_lba ? -1 : 0;
+}
+static int wr(uint32_t lba, const uint8_t *b) {
+    if (probe_io) isr_probe();
+    if (fail_write) return -1;
+    memcpy(disk[lba], b, MSC_BLOCK); return 0;
+}
+static const msc_disk_t D = {rd, wr, NBLK};
+static void lk(void) { lock_depth++; if (lock_depth > lock_max) lock_max = lock_depth; }
+static void ul(void) { lock_depth--; }
 static uint8_t in[70000];
 static int in_len, csw_status;
 static uint32_t csw_residue, csw_tag;
@@ -55,6 +78,7 @@ static void sense(int *key, int *asc, int *ascq) {
 
 void test_msc(void) {
     int k, a, q;
+    uint8_t pkt0[64];
     msc_init(&M, &D);
     /* TEST UNIT READY */
     uint8_t tur[6] = {0};
@@ -186,6 +210,80 @@ void test_msc(void) {
     msc_set_present(&M, 1);
     cbw(46, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 1);          /* unit attention */
     cbw(47, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    /* M2: removal while a WRITE is still receiving data fails it at once (02/3A/00), rest discarded */
+    memcpy(keep, disk[2], sizeof keep);
+    uint8_t w2c[10] = {0x2A, 0, 0, 0, 0, 2, 0, 0, 2, 0};
+    cbw(48, 2 * MSC_BLOCK, 0, w2c, 10);
+    run_out(pat, MSC_BLOCK / 2, 8000);                                   /* half a block, nothing written */
+    msc_set_present(&M, 0);
+    CHECK_EQ(msc_busy(&M, 8000), 1);                                     /* still owes the host a CSW */
+    msc_set_present(&M, 1);                                              /* back before the rest arrives */
+    run_out(pat + MSC_BLOCK / 2, 3 * MSC_BLOCK / 2, 8000); run_in();      /* the remaining 1.5 blocks */
+    CHECK_EQ(csw_status, 1); CHECK_EQ(csw_tag, 48); CHECK_EQ(csw_residue, 2 * MSC_BLOCK);
+    CHECK(memcmp(disk[2], keep, sizeof keep) == 0);                      /* the stale write never lands */
+    sense(&k, &a, &q); CHECK_EQ(k, 2); CHECK_EQ(a, 0x3A); CHECK_EQ(q, 0);
+    cbw(49, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 1);            /* unit attention */
+    cbw(50, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    /* M2: a full block received but not yet written is dropped too */
+    cbw(51, MSC_BLOCK, 0, w1, 10);
+    for (int o = 0; o < (int)MSC_BLOCK; o += 64) CHECK_EQ(msc_rx(&M, junk + o, 64, 8100), 0);
+    before = disk[0][0];
+    msc_set_present(&M, 0); msc_set_present(&M, 1); run_in();
+    CHECK_EQ(csw_status, 1); CHECK_EQ(disk[0][0], before);
+    cbw(52, 0, 0, tur, 6); run_in(); cbw(53, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    /* M5: read error on the 2nd of 3 blocks: block 1 sent, rest zero-filled, residue = Hi - sent */
+    uint8_t r3[10] = {0x28, 0, 0, 0, 0, 2, 0, 0, 3, 0};
+    fail_read_lba = 3;
+    cbw(54, 3 * MSC_BLOCK, 1, r3, 10); run_in();
+    fail_read_lba = -1;
+    CHECK_EQ(in_len, 3 * MSC_BLOCK); CHECK(memcmp(in, disk[2], MSC_BLOCK) == 0);
+    CHECK_EQ(in[MSC_BLOCK], 0); CHECK_EQ(in[3 * MSC_BLOCK - 1], 0);
+    CHECK_EQ(csw_status, 1); CHECK_EQ(csw_residue, 2 * MSC_BLOCK);
+    sense(&k, &a, &q); CHECK_EQ(k, 3); CHECK_EQ(a, 0x11);
+    fail_read_lba = 2;                                                   /* first block fails: residue = Hi */
+    cbw(55, 3 * MSC_BLOCK, 1, r3, 10); run_in();
+    fail_read_lba = -1;
+    CHECK_EQ(in_len, 3 * MSC_BLOCK); CHECK_EQ(csw_status, 1); CHECK_EQ(csw_residue, 3 * MSC_BLOCK);
+    sense(&k, &a, &q);
+
+    /* Concurrency: the lock is taken around state access but never held during the block I/O,
+       and an ISR running during the I/O is refused (packet stays held), so buf is never shared. */
+    msc_set_lock(&M, lk, ul);
+    probe_io = 1;
+    cbw(60, 2 * MSC_BLOCK, 1, r10, 10); run_in();                        /* READ lba 2, 2 blocks */
+    CHECK_EQ(in_len, 2 * MSC_BLOCK); CHECK(memcmp(in, disk[2], 2 * MSC_BLOCK) == 0); CHECK_EQ(csw_status, 0);
+    CHECK_EQ(io_lock_depth, 0); CHECK_EQ(isr_rx, -1); CHECK_EQ(isr_tx, -1);
+    CHECK_EQ(lock_depth, 0); CHECK_EQ(lock_max, 1);
+    isr_rx = isr_tx = 99;
+    cbw(61, 2 * MSC_BLOCK, 0, w10, 10); run_out(pat, 2 * MSC_BLOCK, 9000); run_in();   /* WRITE */
+    CHECK_EQ(csw_status, 0); CHECK(memcmp(disk[2], pat, 2 * MSC_BLOCK) == 0);
+    CHECK_EQ(io_lock_depth, 0); CHECK_EQ(isr_rx, -1); CHECK_EQ(isr_tx, -1); CHECK_EQ(lock_depth, 0);
+    /* io stays set until the I/O has finished: a packet offered meanwhile is held, then accepted */
+    cbw(62, MSC_BLOCK, 0, w1, 10);
+    for (int o = 0; o < (int)MSC_BLOCK; o += 64) CHECK_EQ(msc_rx(&M, junk + o, 64, 9100), 0);
+    CHECK_EQ(M.io, 2);
+    msc_task(&M);                                                        /* probe saw io busy -> -1 */
+    CHECK_EQ(isr_rx, -1); CHECK_EQ(M.io, 0); CHECK_EQ(M.inflight, 0);
+    run_in(); CHECK_EQ(csw_status, 0);
+    /* bus/BOT reset from the ISR during the I/O: the result is dropped, the ISR stays locked out
+       until the I/O ends, and the next command runs normally */
+    isr_reset = 1; isr_rx = isr_tx = 99;
+    cbw(63, 2 * MSC_BLOCK, 1, r10, 10);
+    msc_task(&M);
+    CHECK_EQ(isr_rx, -1); CHECK_EQ(isr_tx, -1);                          /* CBW after the reset held */
+    CHECK_EQ(M.inflight, 0); CHECK_EQ(M.io, 0); CHECK_EQ(msc_busy(&M, 99999), 0);   /* back to IDLE */
+    CHECK_EQ(msc_tx(&M, pkt0), -1);                                      /* no stale data-in */
+    cbw(67, MSC_BLOCK, 0, w1, 10);                                       /* same for a 1-block WRITE */
+    for (int o = 0; o < (int)MSC_BLOCK; o += 64) CHECK_EQ(msc_rx(&M, junk + o, 64, 9200), 0);
+    msc_task(&M);
+    CHECK_EQ(msc_tx(&M, pkt0), -1);                                      /* no CSW for the reset command */
+    isr_reset = 0; probe_io = 0;
+    cbw(64, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0); CHECK_EQ(csw_tag, 64);
+    msc_set_present(&M, 0); msc_set_present(&M, 1);
+    CHECK_EQ(lock_depth, 0);
+    cbw(65, 0, 0, tur, 6); run_in(); cbw(66, 0, 0, tur, 6); run_in();
+    msc_set_lock(&M, 0, 0);
+
     /* garbage instead of a CBW is ignored */
     uint8_t junk31[31] = {1, 2, 3};
     CHECK_EQ(msc_rx(&M, junk31, 31, 0), 0);

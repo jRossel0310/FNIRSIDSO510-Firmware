@@ -36,14 +36,32 @@
 #define EP1_TX 0x100u
 #define RX64   0x8400u                          /* COUNT_RX: BL_SIZE=1, NUM_BLOCK=1 -> 64 bytes */
 
+#define CNTR_IRQS  0xBE00u                         /* CTRM WKUPM SUSPM RESETM SOFM */
+#define USB_IRQ_BIT (1u << 20)                      /* IRQ20: USBFS low priority, NVIC ISER0/ICER0 */
+
+/* Everything below except `busy`, `lock_depth`, `irq_on` and `detached` is owned by the ISR; main
+   context touches it only with the USB IRQ masked (usb_lock) or while the IRQ is off (detached). */
 static msc_t *msc;
 static usb_dev_t dev;
-static uint8_t inited, busy, suspended, tx_busy, rx_held, rx_len, pending_addr, addr;
+static uint8_t inited, busy, tx_busy, rx_held, rx_len, pending_addr, addr;
+static volatile uint8_t suspended;
+static uint8_t irq_on, detached, lock_depth;
 static uint8_t rxbuf[64], txbuf[64];
 static const uint8_t *ctl_ptr;
 static uint16_t ctl_left;
 static uint8_t ctl_zlp;
-static uint32_t last_sof;
+static volatile uint32_t last_sof;
+
+/* Mask the USB IRQ (main context only; nests). The ISR never takes it. */
+static void usb_lock(void) {
+    NVIC_ICER(0) = USB_IRQ_BIT;
+    __asm volatile ("dsb\n isb" ::: "memory");       /* no USB ISR runs after this point */
+    lock_depth++;
+}
+static void usb_unlock(void) {
+    __asm volatile ("" ::: "memory");
+    if (--lock_depth == 0 && irq_on) NVIC_ISER(0) = USB_IRQ_BIT;
+}
 
 static void ep_set_tx(int n, uint32_t s) { uint32_t v = USB_EPR(n) & (EP_MASK | 0x0030u); v ^= s << 4; USB_EPR(n) = v | 0x8080u; }
 static void ep_set_rx(int n, uint32_t s) { uint32_t v = USB_EPR(n) & (EP_MASK | 0x3000u); v ^= s << 12; USB_EPR(n) = v | 0x8080u; }
@@ -78,6 +96,17 @@ static void bus_reset(void) {
     msc_reset(msc);
     tx_busy = rx_held = pending_addr = ctl_left = ctl_zlp = 0;
     suspended = 0;
+}
+
+/* EP1 packet movement: offer a held OUT packet to msc (stays NAKed while msc says -1), then start
+   the next IN packet if the endpoint is free. ISR context, or main context with the IRQ masked. */
+static void ep1_pump(void) {
+    if (detached || !dev.config) return;
+    if (rx_held && msc_rx(msc, rxbuf, rx_len, millis()) == 0) { rx_held = 0; ep_set_rx(1, ST_VALID); }
+    if (!tx_busy) {
+        int n = msc_tx(msc, txbuf);
+        if (n >= 0) { pma_write(EP1_TX, txbuf, n); PMA(10) = (uint32_t)n; ep_set_tx(1, ST_VALID); tx_busy = 1; }
+    }
 }
 
 static void ctl_send(void) {
@@ -153,14 +182,45 @@ static void service_ctr(void) {
                 rx_held = 1;
             }
             if (v & EP_CTR_TX) { ep_clr_ctr_tx(1); tx_busy = 0; }
+            ep1_pump();
         } else {
             USB_EPR(ep) = 0;                            /* unexpected endpoint */
         }
     }
 }
 
+static void usb_service(void) {
+    uint32_t is = USB_ISTR;
+    if (is & ISTR_RESET) { USB_ISTR = (uint16_t)~ISTR_RESET; bus_reset(); }
+    if (is & ISTR_SOF) { USB_ISTR = (uint16_t)~ISTR_SOF; last_sof = millis(); suspended = 0; }
+    if (is & ISTR_SUSP) { USB_ISTR = (uint16_t)~ISTR_SUSP; suspended = 1; }
+    if (is & ISTR_WKUP) { USB_ISTR = (uint16_t)~ISTR_WKUP; suspended = 0; }
+    USB_ISTR = (uint16_t)~(0x6000u | 0x0100u);          /* clear PMAOVR, ERR, ESOF */
+    service_ctr();
+}
+
+/* Reset, SOF/suspend, all of EP0 (SET_ADDRESS applied right after its status IN) and EP1 packets. */
+void USB_LP_IRQHandler(void) { usb_service(); }
+
+static void irq_start(void) {
+    USB_ISTR = 0u;
+    USB_CNTR = CNTR_IRQS;
+    NVIC_ICPR(0) = USB_IRQ_BIT;
+    irq_on = 1;
+    if (!lock_depth) NVIC_ISER(0) = USB_IRQ_BIT;
+}
+
+static void irq_stop(void) {
+    irq_on = 0;
+    NVIC_ICER(0) = USB_IRQ_BIT;
+    __asm volatile ("dsb\n isb" ::: "memory");
+    USB_CNTR = 0u;
+    NVIC_ICPR(0) = USB_IRQ_BIT;
+}
+
 void usbd_init(msc_t *m) {
     msc = m;
+    msc_set_lock(m, usb_lock, usb_unlock);
     CRM_MISC1 |= 1u << 25;                              /* stock: HICK 48 MHz for USB */
     CRM_MISC3 |= 0x200u;
     CRM_MISC3 |= 0x100u;
@@ -174,32 +234,52 @@ void usbd_init(msc_t *m) {
     USB_CNTR = 0u;
     USB_ISTR = 0u;
     bus_reset();
-    USB_CFG &= ~2u;                                     /* D+ pull-up on: host may enumerate */
     inited = 1;
+    irq_start();
+    USB_CFG &= ~2u;                                     /* D+ pull-up on: host may enumerate */
 }
 
+/* Main context: block I/O, then re-offer what the finished I/O unblocked (nothing else would make
+   the ISR run for it). Re-entrant calls (board_idle) return. */
 void usbd_poll(void) {
     if (!inited || busy) return;
     busy = 1;
-    uint32_t is = USB_ISTR;
-    if (is & ISTR_RESET) { USB_ISTR = (uint16_t)~ISTR_RESET; bus_reset(); }
-    if (is & ISTR_SOF) { USB_ISTR = (uint16_t)~ISTR_SOF; last_sof = millis(); suspended = 0; }
-    if (is & ISTR_SUSP) { USB_ISTR = (uint16_t)~ISTR_SUSP; suspended = 1; }
-    if (is & ISTR_WKUP) { USB_ISTR = (uint16_t)~ISTR_WKUP; suspended = 0; }
-    USB_ISTR = (uint16_t)~(0x6000u | 0x0100u);          /* clear PMAOVR, ERR, ESOF */
-    service_ctr();
-    if (rx_held && msc_rx(msc, rxbuf, rx_len, millis()) == 0) { rx_held = 0; ep_set_rx(1, ST_VALID); }
-    msc_task(msc);
-    if (rx_held && msc_rx(msc, rxbuf, rx_len, millis()) == 0) { rx_held = 0; ep_set_rx(1, ST_VALID); }
-    if (!tx_busy && dev.config) {
-        int n = msc_tx(msc, txbuf);
-        if (n >= 0) { pma_write(EP1_TX, txbuf, n); PMA(10) = (uint32_t)n; ep_set_tx(1, ST_VALID); tx_busy = 1; }
-    }
+    msc_task(msc);                                      /* locks only around its state accesses */
+    usb_lock();
+    ep1_pump();
+    usb_unlock();
     busy = 0;
 }
 
+void usbd_detach(void) {
+    if (!inited || detached) return;
+    usb_lock();
+    USB_CFG |= 2u;                                      /* D+ pull-up off: the host sees an unplug */
+    irq_stop();                                         /* no reset/SE0 storm, no EP1 service */
+    detached = 1;
+    ep_set_rx(1, ST_NAK); ep_set_tx(1, ST_NAK);
+    usb_std_init(&dev);                                 /* not configured any more */
+    msc_reset(msc);
+    tx_busy = rx_held = pending_addr = ctl_left = ctl_zlp = 0;
+    usb_unlock();
+}
+
+void usbd_attach(void) {
+    if (!inited || !detached) return;
+    usb_lock();
+    bus_reset();                                        /* address 0, EP0 ready; the host resets us anyway */
+    detached = 0;
+    irq_start();                                        /* stays masked until usb_unlock */
+    USB_CFG &= ~2u;                                     /* D+ pull-up on: the host re-enumerates */
+    usb_unlock();
+}
+
+int usbd_host(void) {
+    return inited && !detached && *(volatile uint8_t *)&dev.config != 0;
+}
+
 int usbd_configured(void) {
-    return inited && dev.config && !suspended && (millis() - last_sof) < 1000u;
+    return usbd_host() && !suspended && (millis() - last_sof) < 1000u;
 }
 
 uint32_t usbd_last_sof_ms(void) { return last_sof; }

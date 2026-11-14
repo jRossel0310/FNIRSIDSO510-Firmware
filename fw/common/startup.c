@@ -27,6 +27,7 @@ void SVC_Handler(void) WEAK;
 void DebugMon_Handler(void) WEAK;
 void PendSV_Handler(void) WEAK;
 void SysTick_Handler(void) WEAK;
+void USB_LP_IRQHandler(void) WEAK;             /* IRQ20: USBFS low priority (shared with CAN1 RX0) */
 
 __attribute__((section(".isr_vector"), used))
 const void *const vectors[16 + 84] = {
@@ -41,7 +42,9 @@ const void *const vectors[16 + 84] = {
     [12] = DebugMon_Handler,
     [14] = PendSV_Handler,
     [15] = SysTick_Handler,
-    [16 ... 16 + 84 - 1] = Default_Handler,
+    [16 ... 16 + 19] = Default_Handler,
+    [16 + 20] = USB_LP_IRQHandler,
+    [16 + 21 ... 16 + 84 - 1] = Default_Handler,
 };
 
 /* Minimal libc pieces GCC may emit calls to (we link with -nostdlib). */

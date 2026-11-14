@@ -127,7 +127,8 @@ static void process_capture(void) {
     shown_meta.edge = st.edge;
     shown_meta.zero_code = (int16_t)(ADC_CENTER + st.offset);
     shown_meta.trig_level_code = st.trig_level;
-    shown_meta.trig_index = t >= 0 ? t : start + pre;
+    shown_meta.trig_index = t >= 0 ? t : start + pre;   /* untriggered Auto: the screen trigger position */
+    shown_meta.triggered = t >= 0;
     shown_meta.offset_pwm = fe_pwm;
     rec = (rec == recbuf[0]) ? recbuf[1] : recbuf[0];
     if (st.trig_mode == TRIG_SINGLE) { st.run = 0; draw_bars(); }
@@ -310,6 +311,7 @@ static void do_autozero(void) {
 static void power_down(void) {
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);
+    usbd_detach();               /* a host sees an unplug, not a dead drive */
     power_off();
     for (;;) WDT_CMD = 0xAAAA;   /* on USB power the scope stays alive; keep the watchdog quiet */
 }
@@ -360,7 +362,7 @@ int main(void) {
             else {
                 adc_abort(); armed = 0;
                 toast(" Saving...    ", 60000);
-                const char *r = save_capture(shown, shown_n, &shown_meta, &msc);
+                const char *r = save_capture(shown, shown_n, &shown_meta, &msc, poll_power);
                 toast(r, 2500);
             }
         }

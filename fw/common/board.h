@@ -19,6 +19,7 @@
 #define SYST_CSR     REG32(0xE000E010)
 #define SYST_RVR     REG32(0xE000E014)
 #define SYST_CVR     REG32(0xE000E018)
+#define NVIC_ISER(i) REG32(0xE000E100 + 4 * (i))
 #define NVIC_ICER(i) REG32(0xE000E180 + 4 * (i))
 #define NVIC_ICPR(i) REG32(0xE000E280 + 4 * (i))
 
