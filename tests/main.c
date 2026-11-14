@@ -14,6 +14,7 @@ void test_flashmap(void);
 void test_fake_flash(void);
 void test_capname(void);
 void test_csv(void);
+void test_capsave(void);
 
 int main(void) {
     test_fmt();
@@ -29,6 +30,7 @@ int main(void) {
     test_fake_flash();
     test_capname();
     test_csv();
+    test_capsave();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }

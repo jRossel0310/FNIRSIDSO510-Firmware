@@ -47,3 +47,12 @@ const void *const vectors[16 + 84] = {
 /* Minimal libc pieces GCC may emit calls to (we link with -nostdlib). */
 void *memset(void *d, int c, size_t n) { unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
 void *memcpy(void *d, const void *s, size_t n) { unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
+int memcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *p = a, *q = b;
+    for (; n; n--, p++, q++) if (*p != *q) return *p - *q;
+    return 0;
+}
+char *strchr(const char *s, int c) {
+    for (;; s++) { if (*s == (char)c) return (char *)s; if (!*s) return 0; }
+}
+size_t strlen(const char *s) { const char *p = s; while (*p) p++; return (size_t)(p - s); }
