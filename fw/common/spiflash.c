@@ -1,5 +1,6 @@
 #include "spiflash.h"
 #include "board.h"
+#include "flashmap.h"
 
 #define SPI3_CTRL1 REG32(0x40003C00)
 #define SPI3_STS   REG32(0x40003C08)
@@ -60,4 +61,57 @@ int spiflash_read(uint32_t addr, uint8_t *buf, uint32_t n) {
     for (uint32_t i = 0; i < n && !spi_err; i++) buf[i] = xfer(0);
     cs(1);
     return spi_err ? -1 : 0;
+}
+
+#define CMD_WREN 0x06
+#define CMD_RDSR 0x05
+#define CMD_SE   0x20
+#define CMD_PP   0x02
+
+/* Poll WIP (status bit 0) until clear or ms elapsed. Uses millis(), never delay_ms(). */
+static int wait_ready(uint32_t ms) {
+    uint32_t t0 = millis();
+    for (;;) {
+        cs(0); xfer(CMD_RDSR); uint8_t sr = xfer(0); cs(1);
+        if (spi_err) return -1;
+        if (!(sr & 1u)) return 0;
+        if (millis() - t0 > ms) return -1;
+        WDT_CMD = 0xAAAA;
+    }
+}
+
+static void write_enable(void) { cs(0); xfer(CMD_WREN); cs(1); }
+
+int spiflash_erase_sector(uint32_t addr) {
+    if ((addr & (FLASH_SECTOR - 1)) || !flashmap_writable(addr, FLASH_SECTOR)) return -2;
+    spi_err = 0;
+    write_enable();
+    cs(0); xfer(CMD_SE); xfer((uint8_t)(addr >> 16)); xfer((uint8_t)(addr >> 8)); xfer((uint8_t)addr); cs(1);
+    return spi_err ? -1 : wait_ready(500);
+}
+
+int spiflash_program(uint32_t addr, const uint8_t *buf, uint32_t n) {
+    if (n == 0 || n > SPIFLASH_PAGE || (addr & (SPIFLASH_PAGE - 1)) + n > SPIFLASH_PAGE) return -2;
+    if (!flashmap_writable(addr, n)) return -2;
+    spi_err = 0;
+    write_enable();
+    cs(0); xfer(CMD_PP); xfer((uint8_t)(addr >> 16)); xfer((uint8_t)(addr >> 8)); xfer((uint8_t)addr);
+    for (uint32_t i = 0; i < n && !spi_err; i++) xfer(buf[i]);
+    cs(1);
+    return spi_err ? -1 : wait_ready(20);
+}
+
+int spiflash_write_sector(uint32_t addr, const uint8_t *buf) {
+    static uint8_t chk[SPIFLASH_PAGE];
+    int r = spiflash_erase_sector(addr);
+    if (r) return r;
+    for (uint32_t o = 0; o < FLASH_SECTOR; o += SPIFLASH_PAGE) {
+        r = spiflash_program(addr + o, buf + o, SPIFLASH_PAGE);
+        if (r) return r;
+    }
+    for (uint32_t o = 0; o < FLASH_SECTOR; o += SPIFLASH_PAGE) {
+        if (spiflash_read(addr + o, chk, SPIFLASH_PAGE)) return -1;
+        for (uint32_t i = 0; i < SPIFLASH_PAGE; i++) if (chk[i] != buf[o + i]) return -3;
+    }
+    return 0;
 }

@@ -11,6 +11,7 @@ void test_cal(void);
 void test_control(void);
 void test_autoset(void);
 void test_flashmap(void);
+void test_fake_flash(void);
 void test_capname(void);
 void test_csv(void);
 
@@ -25,6 +26,7 @@ int main(void) {
     test_control();
     test_autoset();
     test_flashmap();
+    test_fake_flash();
     test_capname();
     test_csv();
     printf("%d checks, %d failed\n", t_run, t_fail);
