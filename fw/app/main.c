@@ -19,6 +19,8 @@
 #include "msc.h"
 #include "usbd.h"
 #include "save.h"
+#include "stream.h"
+#include "logger.h"
 
 #define REC_MAX (4 * 1200)
 
@@ -46,10 +48,11 @@ static meas_avg_t meas_avg;
 static uint8_t zeroed, zero_failed;
 #define UNCAL() (!cal.valid && !zeroed)
 
+static uint8_t usb_marker;      /* "USB" shown in the top bar (frames streaming) */
 static const char *toast_msg;
 static void toast(const char *msg, uint32_t ms) { toast_msg = msg; ui_toast(msg); toast_until = millis() + ms; }
 /* Status bars; re-show an active toast, since the mode label shares its columns. */
-static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); }
+static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); if (usb_marker) ui_draw_usb(1); }
 
 static uint16_t fe_pwm;          /* offset PWM last applied */
 static uint32_t fe_settle_need;  /* settle time owed by the last apply_fe() */
@@ -139,6 +142,7 @@ static void process_capture(void) {
     meas_avg_update(&meas_avg, &raw, &last_meas);
     have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10;
     ui_draw_meas(&st, &last_meas);
+    stream_frame(shown, shown_n, &shown_meta);
 }
 
 static void minmax(int *mn, int *mx) {
@@ -309,11 +313,100 @@ static void do_autozero(void) {
 }
 
 static void power_down(void) {
+    adc_abort();                 /* stop the logger ring DMA before power-off */
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);
     usbd_detach();               /* a host sees an unplug, not a dead drive */
     power_off();
     for (;;) WDT_CMD = 0xAAAA;   /* on USB power the scope stays alive; keep the watchdog quiet */
+}
+
+static uint8_t ring[8192];
+static uint32_t ring_n;                 /* even, <= sizeof ring: halves of ~100 ms */
+static uint32_t ring_consumed;
+static uint32_t log_rate, log_next_ui;
+static int log_vmin = 255, log_vmax, log_cnt; static uint32_t log_sum;
+
+static void log_send_meta(void) {
+    stream_logmeta(log_rate, vdiv_mv[st.vdiv], st.probe_x10, st.coupling_dc,
+                   (int16_t)(ADC_CENTER + st.offset), fe_pwm);
+}
+
+static int hook_log_start(uint32_t rate) {
+    rate_cfg_t q = units_rate_for_hz(rate);
+    if (!q.rate_hz) return -1;
+    adc_abort(); armed = 0;
+    st.menu_open = 0;
+    rc = q;                              /* apply_fe uses rc.rate_hz for the cal set */
+    adc_set_rate(q.psc, q.arr);
+    apply_fe();
+    log_rate = rate;
+    ring_n = rate / 5;                   /* two halves of ~100 ms */
+    if (ring_n > sizeof ring) ring_n = sizeof ring;
+    if (ring_n < 256) ring_n = 256;
+    ring_n &= ~1u;
+    log_vmin = 255; log_vmax = 0; log_sum = 0; log_cnt = 0;
+    lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
+    log_next_ui = millis();
+    log_send_meta();
+    ring_consumed = 0;
+    adc_ring_start(ring, (uint16_t)ring_n);
+    return 0;
+}
+
+static void hook_log_stop(void) {
+    adc_abort(); armed = 0;
+    apply_time();                         /* back to the scope's own timebase */
+    settle_until = millis() + FE_SETTLE_MS;
+    have_trace = 0;
+    redraw_all();
+}
+
+static const stream_hooks_t hooks = {hook_log_start, hook_log_stop};
+
+/* Logger mode, one main-loop step: move completed ring halves to USB, keys, status screen. */
+static void logger_step(void) {
+    uint32_t done = adc_ring_completed();              /* one snapshot per pass */
+    ring_pick_t pk = logger_pick(done, &ring_consumed, ring_n);
+    if (pk.lost) stream_log_lost(pk.lost);
+    int halves[2] = {pk.first, pk.second};
+    for (int h = 0; h < 2; h++) {
+        if (halves[h] < 0) continue;
+        const uint8_t *p = ring + (uint32_t)halves[h] * (ring_n / 2);
+        stream_log(p, ring_n / 2);
+        for (uint32_t i = 0; i < ring_n / 2; i++) {
+            if (p[i] < log_vmin) log_vmin = p[i];
+            if (p[i] > log_vmax) log_vmax = p[i];
+            log_sum += p[i];
+        }
+        log_cnt += (int)(ring_n / 2);
+    }
+    kev_t ev[8];
+    int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
+    for (int i = 0; i < ne; i++) {
+        int tap = ev[i].type == KEV_SHORT || ev[i].type == KEV_REPEAT;
+        if (ev[i].key == KEY_POWER && ev[i].type == KEV_LONG) power_down();
+        else if (ev[i].key == KEY_RUN && ev[i].type == KEV_SHORT) { stream_stop_log(); return; }
+        else if (tap && (ev[i].key == KEY_UP || ev[i].key == KEY_DOWN)) {
+            int nv = st.vdiv + (ev[i].key == KEY_UP ? -1 : 1);       /* Up = more sensitive */
+            if (nv >= 0 && nv < NUM_VDIV) { st.vdiv = (int8_t)nv; apply_fe(); log_send_meta(); }
+        }
+    }
+    uint32_t now = millis();
+    if ((int32_t)(now - log_next_ui) >= 0) {
+        log_next_ui = now + 250;
+        uint32_t sent, dropped;
+        stream_log_stats(&sent, &dropped);
+        float vpc = units_volts_per_code(st.vdiv, st.probe_x10);
+        int zero = ADC_CENTER + st.offset;
+        float mean = log_cnt ? (float)log_sum / (float)log_cnt : (float)zero;
+        ui_draw_logger(log_rate, sent, dropped,
+                       log_cnt ? (float)(log_vmin - zero) * vpc : 0.0f,
+                       log_cnt ? (float)(log_vmax - zero) * vpc : 0.0f,
+                       (mean - (float)zero) * vpc,
+                       (float)vdiv_mv[st.vdiv] * 1e-3f * (st.probe_x10 ? 10.0f : 1.0f));
+        log_vmin = 255; log_vmax = 0; log_sum = 0; log_cnt = 0;
+    }
 }
 
 int main(void) {
@@ -331,6 +424,7 @@ int main(void) {
     spiflash_init();
     msc_init(&msc, &vol_disk);
     usbd_init(&msc);
+    stream_init(&hooks);
     gen_sine_init(2399);          /* 1 kHz test sine until sub-project 3 adds the generator UI */
     apply_time();
     redraw_all();
@@ -339,6 +433,10 @@ int main(void) {
 
     for (;;) {
         usbd_poll();
+        stream_poll();
+        if (stream_mode() == STREAM_LOG) { logger_step(); WDT_CMD = 0xAAAA; continue; }
+        int usb_on = stream_mode() == STREAM_FRAMES;
+        if (usb_on != usb_marker) { usb_marker = (uint8_t)usb_on; ui_draw_usb(usb_on); }
         kev_t ev[8];
         int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
         uint32_t chg = 0;

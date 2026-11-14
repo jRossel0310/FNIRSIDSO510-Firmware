@@ -119,3 +119,24 @@ void ui_toast(const char *msg) {
 }
 
 void ui_toast_clear(void) { lcd_fill(19 * 8, 0, 14 * 8, 16, C_BLACK); }
+
+void ui_draw_usb(int on) { lcd_text(29, 0, on ? "USB" : "   ", C_BLACK, on ? C_CYAN : C_BLACK); }
+
+static void kv_line(int row, const char *k, const char *v, uint16_t col) {
+    int c = lcd_text(2, row, k, C_GRAY, C_BLACK);
+    c = lcd_text(c, row, v, col, C_BLACK);
+    lcd_fill(c * 8, row * 16, LCD_W - c * 8, 16, C_BLACK);   /* clear the rest of the row */
+}
+
+void ui_draw_logger(uint32_t rate_hz, uint32_t sent, uint32_t dropped, float vmin, float vmax, float vmean,
+                    float vdiv_v) {
+    char b[16];
+    lcd_text(2, 2, "LOGGING -> USB      Run = stop", C_CYAN, C_BLACK);
+    kv_line(4, "rate      ", fmt_si(b, (float)rate_hz, "S/s", 0), C_WHITE);
+    kv_line(5, "V/div     ", fmt_si(b, vdiv_v, "V", 1), C_YELLOW);
+    kv_line(7, "sent      ", fmt_u(b, sent, 1), C_WHITE);
+    kv_line(8, "dropped   ", fmt_u(b, dropped, 1), dropped ? C_RED : C_GREEN);
+    kv_line(10, "min       ", fmt_si(b, vmin, "V", 0), C_WHITE);
+    kv_line(11, "max       ", fmt_si(b, vmax, "V", 0), C_WHITE);
+    kv_line(12, "mean      ", fmt_si(b, vmean, "V", 0), C_WHITE);
+}
