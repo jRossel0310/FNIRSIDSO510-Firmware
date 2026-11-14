@@ -276,3 +276,10 @@ Scope app, probe on the generator output (50 kHz, 3.0 Vpp), checked over USB fra
   with no trace held leaves the old slot shown until the menu closes; menu box covers the bottom 4 px of the top
   bar (a toast expiring under the open menu leaves a notch); no host test with a partial last period for the
   statistics window.
+
+## Windows (2026-11-14, user)
+
+- Plugging the scope into Windows: Windows reports a problem with the drive and suggests repairing it. Ignoring
+  that, the drive opens and the files show up cleanly. Likely cause: the FAT12 "volume dirty" flag (boot sector
+  byte 0x25, bit 0), which Linux's `fsck.vfat -n` also reported earlier as the only issue. Not yet verified on
+  the current volume; the repair was not run.

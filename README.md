@@ -42,6 +42,14 @@ show exactly what the LCD shows, without the glare of a photo. Photos of the rea
 On Linux, [`tools/flash.sh`](tools/flash.sh) waits for the update drive and copies the file for you:
 `tools/flash.sh firmware/APP_DSO-510_app.bin`.
 
+### Windows: "There's a problem with this drive"
+
+When the scope is plugged into a Windows PC, Windows may offer to *scan and fix* the `DSO-510` drive. You can
+close that message: the drive opens and the files are fine. The prompt most likely comes from the FAT
+"volume dirty" flag, which another computer (or Windows itself) leaves set when the drive is unplugged or the
+scope disconnects to save a capture while the drive is mounted; on Linux, `fsck.vfat -n` reports only that flag
+and no real errors. Running the repair has not been tested; if you do run it, copy your CSV files off first.
+
 ### Going back to stock
 
 Download the stock firmware from FNIRSI's website and install it the same way (update button + Power, copy
@@ -157,7 +165,8 @@ firmware are in [`NOTES.md`](NOTES.md).
 
 Known limitations: about 1 % of 48 MS/s frames have one stream sampled 20 ns late (a bus-timing limit of the
 chip); at 24 / 48 MS/s an isolated one-sample spike is filtered out, which would also remove a genuine 20 ns
-pulse; file timestamps are fixed because the scope has no clock. Tested on Linux only.
+pulse; file timestamps are fixed because the scope has no clock. Tested mainly on Linux; on Windows the
+drive works but Windows may suggest repairing it (see above). macOS is untested.
 
 ## Licence
 
