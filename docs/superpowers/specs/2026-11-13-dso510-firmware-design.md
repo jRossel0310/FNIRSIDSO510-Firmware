@@ -486,3 +486,46 @@ Sub-project 5 is split. 5a (this section) is what needs no new UI decisions. 5b 
   read back, overwrite, missing file, corrupt file); generator DC level.
 - Device: change scope and generator settings, power off with the key, power on: everything is back. Auto-zero,
   power cycle: still zeroed. Delete the file from the PC: defaults. CSV save and the USB drive still work.
+
+## Sub-project 5b: measurement set and auto shutdown
+
+Decided with the user (2026-11-14): three selectable measurement slots in the bottom bar; auto shutdown with
+default 10 minutes; no roll mode (no timebases slower than 50 ms/div), no buzzer or key beeps, no brightness
+setting.
+
+### Measurements
+
+- Twelve measurements, as stock: frequency, period, duty +, duty -, width + (positive pulse width), width -,
+  maximum, minimum, peak-to-peak, amplitude (top - base, the most frequent level in the upper and in the lower half
+  of the signal), RMS, average.
+- Time measurements use rising crossings of the mid level (as before) and need at least one full period;
+  otherwise they show `---`. Voltage statistics (average, RMS, top, base) are taken over a whole number of
+  periods when there is one, else over the whole record. Voltages are relative to the 0 V marker.
+- Three slots, each showing any of the twelve. Defaults: frequency, duty +, peak-to-peak. Chosen in the menu
+  (rows `Meas 1`, `Meas 2`, `Meas 3`, full names) and saved with the settings.
+- Display: the bottom bar (16 px) becomes two 8 px lines in a second, half-height font (8x8, X11 "Clean" by
+  Dale Schumacher, permissive licence in the header). Line 1: V/div, trigger mode, probe, coupling, edge
+  (`Rising` / `Falling`). Line 2: the three slots, 13 columns each, as short name + value
+  (`Freq 50.0kHz`, `Per`, `Duty+`, `Duty-`, `Wid+`, `Wid-`, `Max`, `Min`, `Vpp`, `Ampl`, `RMS`, `Avg`).
+- Values are averaged over up to 8 captures like the existing three.
+
+### Auto shutdown
+
+- Menu row `Auto off`: Off / 5 / 10 / 30 minutes, default 10, saved with the settings.
+- The timer restarts on every key event. When it expires the scope powers down exactly as with the Power key
+  (settings are stored). It is postponed while frames are streaming, the logger runs, or a USB host is using the
+  drive.
+
+### Settings file
+
+- Version 2, 160 bytes: version-1 layout plus the three slot selections and the auto-off choice, then the CRC.
+  Version-1 files (156 bytes) are still read; the new fields take their defaults. Files are written as version 2.
+
+### Testing
+
+- Host: each measurement on synthetic records (square with known duty, sine, DC, too few periods); names; the
+  menu rows; settings v1 and v2; averaging.
+- Device: generator square 1 kHz 30 % duty, 2.0 Vpp around 1.5 V: frequency 1 kHz, period 1 ms, duty 30 / 70 %,
+  widths 300 / 700 us, max about 2.5 V, min about 0.5 V, Vpp and amplitude about 2.0 V, average about 1.1 V, RMS
+  about 1.46 V (the scope reads about 6 % low). Slots survive a power cycle. Auto off at 5 minutes switches off
+  and is postponed while the PC streams.
