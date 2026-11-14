@@ -22,6 +22,7 @@
 #define DMA_REQ_TMR4_OVF 0x4F   // stock value for the ch7 field
 
 static volatile int busy;
+static volatile uint32_t ring_done;
 
 void adc_init(void) {
     CRM_AHBEN |= 1u << 0;            // DMA1
@@ -81,7 +82,33 @@ int adc_done(void) {
 }
 
 void adc_abort(void) {
-    DMA1_C7CTRL = 0;
+    DMA1_C7CTRL = 0;                   /* also clears HTIE/TCIE */
+    NVIC_ICER(0) = 1u << 17;
     DMA1_CLR = 0xFu << 24;
     busy = 0;
+}
+
+#define DMA_CH7_HT (1u << 26)
+#define DMA_CH7_TC (1u << 25)
+
+void adc_ring_start(uint8_t *buf, uint16_t n) {
+    DMA1_C7CTRL = 0;
+    DMA1_CLR = 0xFu << 24;
+    DMA1_C7MADDR = (uint32_t)buf;
+    DMA1_C7DTCNT = n;
+    busy = 0;                          /* not a one-shot capture: adc_done() stays 1 */
+    ring_done = 0;
+    NVIC_ICPR(0) = 1u << 17;
+    NVIC_ISER(0) = 1u << 17;
+    /* very high prio, 8-bit, mem increment, circular (0x20), HTIE (4), TCIE (2), enable */
+    DMA1_C7CTRL = 0x3000 | 0x80 | 0x20 | 4 | 2 | 1;
+}
+
+uint32_t adc_ring_completed(void) { return ring_done; }
+
+void DMA1_Channel7_IRQHandler(void) {
+    uint32_t s = DMA1_STS & (DMA_CH7_HT | DMA_CH7_TC);
+    if (s & DMA_CH7_HT) ring_done++;
+    if (s & DMA_CH7_TC) ring_done++;
+    DMA1_CLR = s;
 }
