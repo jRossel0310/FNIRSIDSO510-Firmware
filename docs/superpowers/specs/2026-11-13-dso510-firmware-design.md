@@ -446,3 +446,39 @@ Real-time, single-shot sampling above the 12 MS/s a single DMA channel can move.
 - Device: `ilvtest` bench (done). In the scope app: a 50 kHz triangle and a 20 kHz square from the generator at
   5, 2 and 1 us/div look smooth (no comb pattern); the frequency reading stays right; 50-200 ns/div draw; CSV save
   and frame streaming report 24 / 48 MS/s; slower timebases, the logger and the generator are unaffected.
+
+## Sub-project 5a: settings persistence and parked fixes
+
+Sub-project 5 is split. 5a (this section) is what needs no new UI decisions. 5b (measurement set, roll mode for
+>= 100 ms/div, settings menu with brightness and auto-shutdown, buzzer) waits for the user's input.
+
+### Settings persistence
+
+- Saved: timebase, V/div, offset, trigger level / position / mode / edge, coupling, probe, control mode, all
+  generator settings, and the auto-zero result (the shifted offset tables and the "zeroed" flag). Not saved: run /
+  stop (always starts running), open menus.
+- Where: one small binary file `/DSO510.CFG` on the user FAT volume (the only SPI-flash area we may write).
+- When: read once at power-on, before USB starts. Written at power-off (after the USB detach), and only if the
+  settings differ from what was last read or written, so normal use costs at most one small write per power cycle.
+  Settings changed before a battery pull or crash are lost. Not written if a capture save is in progress.
+- Format (little endian): magic `DSS1`, version 1, flags, timebase in ns and V/div in mV (values, not table
+  indices, so later table changes do not corrupt old files), the remaining fields, 2 x 3 x 10 offset-table words,
+  CRC-16/CCITT-FALSE over everything before it. A file with a wrong size, magic, version or CRC, or with a
+  timebase / V/div value that is not in the tables, is ignored as a whole (defaults). Every other field is
+  clamped into range. The offset tables are used only if the zeroed flag is set and every entry is <= 0xFFE.
+
+### Parked fixes included
+
+- Generator: the DC level is its own setting (0 ... 3.1 V, default 1.5 V), separate from the wave offset, so
+  visiting DC no longer changes the offset of the other waveforms. On the generator page the `Offset` row edits
+  the DC level while DC is selected; in the quick `Gen` mode Up/Down edits the DC level while DC is selected and
+  the label shows it.
+- Timebase changes that switch the offset calibration set wait for the front end to settle (the settle time the
+  offset step needs), not just the fixed 40 ms.
+
+### Testing
+
+- Host: pack / unpack round trip, every rejection case, clamping; the settings file on the fake flash (write,
+  read back, overwrite, missing file, corrupt file); generator DC level.
+- Device: change scope and generator settings, power off with the key, power on: everything is back. Auto-zero,
+  power cycle: still zeroed. Delete the file from the PC: defaults. CSV save and the USB drive still work.
