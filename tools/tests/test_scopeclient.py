@@ -74,5 +74,37 @@ class TestClient(unittest.TestCase):
         self.assertIn(b"LOG 100000\n", opened[1].written)   # resumed after the reconnect
 
 
+    def test_missing_pyserial_stops_retrying(self):
+        calls = []
+
+        def opener(p):
+            calls.append(p)
+            raise ImportError("No module named 'serial'")
+
+        c = scopeclient.ScopeClient(port="fake", opener=opener, retry_s=0.01)
+        deadline = time.time() + 2
+        while c.last_error is None and time.time() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.2)                       # would have retried ~20 times by now
+        c.close()
+        self.assertEqual(c.last_error, scopeclient.PYSERIAL_MISSING)
+        self.assertEqual(len(calls), 1)
+
+    def test_reader_bug_is_reported_and_stops(self):
+        class BadPort(FakePort):
+            def read(self, n):
+                raise ValueError("decoder bug")
+
+        port = BadPort([])
+        opened = []
+        c = scopeclient.ScopeClient(port="fake", opener=lambda p: opened.append(p) or port, retry_s=0.01)
+        c.start("frames")
+        time.sleep(0.2)
+        c.close()
+        self.assertEqual(c.last_error, "reader stopped: ValueError: decoder bug")
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(port.closed)
+
+
 if __name__ == "__main__":
     unittest.main()

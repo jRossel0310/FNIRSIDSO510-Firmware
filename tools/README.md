@@ -33,10 +33,15 @@ it waits, and the last start command is re-sent once the scope returns.
 
 - **Frames** shows the latest acquisition frame, with time 0 at the trigger
   point, and the frame rate in the status line.
-- **Logger** shows a rolling window (set by *Window*) of the continuous
-  sample stream at the chosen *Logger rate*. The status line shows the
-  sample count, the measured S/s and the number of dropped samples. A drop
-  appears as a gap in the trace.
+- **Logger** shows a rolling window (set by *Window*, up to 60 s) of the
+  continuous sample stream at the chosen *Logger rate*. The status line shows
+  the sample count, the measured S/s and the number of dropped samples. A drop
+  appears as a gap in the trace. Long windows are decimated to min/max pairs
+  so the display stays responsive at 500 kS/s.
+
+*Mode* and *Logger rate* are locked while running; *Window* can change live.
+Each Start (and each reconnect) begins a new logger session, and the plot is
+cleared, because the scope restarts its sample index at 0.
 
 ## Recording
 
@@ -44,12 +49,14 @@ Tick *Record CSV* and pick a folder before or during a run.
 
 - Frames: each frame is written as its own file in `frames-<time>/`,
   `frame_0001.csv`, `frame_0002.csv`, ... The format is the scope's own CSV.
-- Logger: one file, `log-<time>.csv`. Dropped samples appear as `# gap=`
-  comment lines, and a settings change mid-run appears as a
-  `# settings changed` line.
+- Logger: one file per session, `log-<time>-partN.csv`. Time 0 is the first
+  sample of that session, so a new session (Start, or a reconnect) opens the
+  next part. Dropped samples appear as `# gap=` comment lines, and a settings
+  change within a session appears as a `# settings changed` line.
 
 Recording only captures data from the moment it is ticked. Unticking the box
-closes the file.
+closes the file. Errors (for example an unwritable folder, or a scope error)
+appear in red below the status line and clear after a few seconds.
 
 ## Reading a recording
 

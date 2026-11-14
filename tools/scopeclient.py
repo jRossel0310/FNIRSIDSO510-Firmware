@@ -6,6 +6,13 @@ import time
 import dsoproto
 
 VID, PID = 0x2E3C, 0x5720
+PYSERIAL_MISSING = "pyserial not installed: pip install -r tools/requirements.txt"
+
+try:
+    import serial as _serial
+    DISCONNECT_ERRORS = (OSError, _serial.SerialException)
+except ImportError:                     # the client still imports; opening a port reports it
+    DISCONNECT_ERRORS = (OSError,)
 
 
 def find_port():
@@ -29,7 +36,8 @@ class ScopeClient:
         self.retry_s = retry_s
         self.q = queue.Queue()
         self.connected = False
-        self.mode = None            # None, "frames" or "log"
+        self.last_error = None          # fatal: the reader thread has stopped
+        self.mode = None                # None, "frames" or "log"; set with rate under _lock
         self.rate = None
         self._port = None
         self._lock = threading.Lock()
@@ -38,10 +46,12 @@ class ScopeClient:
         self._t.start()
 
     def _command(self):
-        if self.mode == "frames":
+        with self._lock:
+            mode, rate = self.mode, self.rate
+        if mode == "frames":
             return b"FRAMES\n"
-        if self.mode == "log":
-            return b"LOG %d\n" % self.rate
+        if mode == "log":
+            return b"LOG %d\n" % rate
         return None
 
     def _send(self, data):
@@ -53,13 +63,15 @@ class ScopeClient:
                     pass
 
     def start(self, mode, rate=None):
-        self.mode, self.rate = mode, rate
+        with self._lock:
+            self.mode, self.rate = mode, rate
         cmd = self._command()
         if cmd:
             self._send(cmd)
 
     def stop(self):
-        self.mode = None
+        with self._lock:
+            self.mode, self.rate = None, None
         self._send(b"STOP\n")
 
     def packets(self, timeout=0.05):
@@ -79,7 +91,7 @@ class ScopeClient:
             if self._port is not None:
                 try:
                     self._port.close()
-                except OSError:
+                except DISCONNECT_ERRORS:
                     pass
                 self._port = None
 
@@ -90,30 +102,42 @@ class ScopeClient:
                 if not name:
                     raise OSError("scope not found")
                 p = self.opener(name)
-            except Exception:                       # noqa: BLE001 - any open failure means retry
+            except DISCONNECT_ERRORS:           # not there (yet): retry
                 time.sleep(self.retry_s)
                 continue
+            except ImportError:                 # pyserial missing: retrying cannot help
+                self.last_error = PYSERIAL_MISSING
+                return
+            except Exception as e:              # noqa: BLE001 - report, do not spin
+                self.last_error = "open failed: %s: %s" % (type(e).__name__, e)
+                return
             dec = dsoproto.Decoder()
             with self._lock:
                 self._port = p
             self.connected = True
             cmd = self._command()
             if cmd:
-                self._send(cmd)                     # resume the previous mode
+                self._send(cmd)                 # resume the previous mode
+            fatal = None
             try:
                 while not self._stop.is_set():
                     data = p.read(4096)
                     if data:
                         for pk in dec.feed(data):
                             self.q.put(pk)
-            except Exception:                       # noqa: BLE001 - unplug / soft-disconnect
+            except DISCONNECT_ERRORS:           # unplug / soft-disconnect
                 pass
+            except Exception as e:              # noqa: BLE001 - a bug, not a cable: stop and report
+                fatal = "reader stopped: %s: %s" % (type(e).__name__, e)
             self.connected = False
             with self._lock:
                 self._port = None
             try:
                 p.close()
-            except Exception:                       # noqa: BLE001
+            except DISCONNECT_ERRORS:
                 pass
+            if fatal:
+                self.last_error = fatal
+                return
             if not self._stop.is_set():
                 time.sleep(self.retry_s)
