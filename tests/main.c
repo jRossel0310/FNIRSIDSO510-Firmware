@@ -10,6 +10,8 @@ void test_measure(void);
 void test_cal(void);
 void test_control(void);
 void test_autoset(void);
+void test_flashmap(void);
+void test_capname(void);
 
 int main(void) {
     test_fmt();
@@ -21,6 +23,8 @@ int main(void) {
     test_cal();
     test_control();
     test_autoset();
+    test_flashmap();
+    test_capname();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }
