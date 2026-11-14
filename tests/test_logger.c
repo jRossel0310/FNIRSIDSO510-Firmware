@@ -134,6 +134,59 @@ void test_logger(void) {
     CHECK(memcmp(p.d, s, 100) == 0);
     CHECK(!pop(&p));
 
+    /* logger_push_fit: partial push returns what was consumed, never counts a loss */
+    bf_init(&F, mem, sizeof mem);
+    logger_init(&L);
+    bf_write(&F, big, 4096 - (2 * (1024 + 11) + 500));     /* room for two full chunks, not a third */
+    uint32_t k = logger_push_fit(&L, &F, s, 3000);
+    CHECK_EQ(k, 2048); CHECK_EQ(L.index, 2048); CHECK_EQ(L.sent, 2048);
+    CHECK_EQ(L.dropped, 0); CHECK_EQ(L.pending_drop, 0);
+    bf_read(&F, big, 4096 - (2 * (1024 + 11) + 500));
+    CHECK(pop(&p)); CHECK_EQ(p.type, SP_LOG); CHECK_EQ(p.a, 0); CHECK_EQ(p.n, 1024);
+    CHECK(memcmp(p.d, s, 1024) == 0);
+    CHECK(pop(&p)); CHECK_EQ(p.type, SP_LOG); CHECK_EQ(p.a, 1024); CHECK_EQ(p.n, 1024);
+    CHECK(memcmp(p.d, s + 1024, 1024) == 0);
+    CHECK(!pop(&p));
+    k = logger_push_fit(&L, &F, s + 2048, 3000 - 2048);    /* the rest: 952 samples, fits now */
+    CHECK_EQ(k, 952); CHECK_EQ(L.index, 3000); CHECK_EQ(L.dropped, 0);
+    CHECK(pop(&p)); CHECK_EQ(p.type, SP_LOG); CHECK_EQ(p.a, 2048); CHECK_EQ(p.n, 952);
+    CHECK(memcmp(p.d, s + 2048, 952) == 0);
+    CHECK(!pop(&p));
+    /* nothing fits: 0 consumed, index unchanged, no loss */
+    bf_write(&F, big, 4096 - 110);                        /* 100 samples need 111 */
+    k = logger_push_fit(&L, &F, s, 100);
+    CHECK_EQ(k, 0); CHECK_EQ(L.index, 3000); CHECK_EQ(L.pending_drop, 0); CHECK_EQ(L.dropped, 0);
+    bf_read(&F, big, 4096 - 110);
+    CHECK(!pop(&p));
+    /* pending DROP goes out before the first chunk; its room counts in the fit */
+    logger_lost(&L, 500);                                 /* index 3500, pending 500 */
+    bf_write(&F, big, 4096 - 125);                        /* 100 samples + DROP need 126 */
+    k = logger_push_fit(&L, &F, s, 100);
+    CHECK_EQ(k, 0); CHECK_EQ(L.index, 3500); CHECK_EQ(L.pending_drop, 500);
+    bf_read(&F, big, 4096 - 125);
+    CHECK(!pop(&p));
+    bf_write(&F, big, 4096 - 126);
+    k = logger_push_fit(&L, &F, s, 100);
+    CHECK_EQ(k, 100); CHECK_EQ(L.index, 3600); CHECK_EQ(L.pending_drop, 0); CHECK_EQ(L.dropped, 500);
+    bf_read(&F, big, 4096 - 126);
+    CHECK(pop(&p)); CHECK_EQ(p.type, SP_DROP); CHECK_EQ(p.a, 3500); CHECK_EQ(p.b, 500);
+    CHECK(pop(&p)); CHECK_EQ(p.type, SP_LOG); CHECK_EQ(p.a, 3500); CHECK_EQ(p.n, 100);
+    CHECK(!pop(&p));
+    CHECK_EQ(logger_push_fit(&L, &F, s, 0), 0);           /* n = 0: nothing queued */
+    CHECK(!pop(&p));
+
+    /* logger_put_drop: the pending DROP on its own (sent before a LOGMETA) */
+    CHECK_EQ(logger_put_drop(&L, &F), 0);                 /* nothing pending: no packet */
+    CHECK(!pop(&p));
+    logger_lost(&L, 40);                                  /* index 3640, pending 40 */
+    bf_write(&F, big, 4096 - 14);                         /* DROP needs 15 */
+    CHECK_EQ(logger_put_drop(&L, &F), -1); CHECK_EQ(L.pending_drop, 40);
+    bf_read(&F, big, 4096 - 14);
+    CHECK(!pop(&p));
+    CHECK_EQ(logger_put_drop(&L, &F), 0); CHECK_EQ(L.pending_drop, 0); CHECK_EQ(L.index, 3640);
+    CHECK(pop(&p)); CHECK_EQ(p.type, SP_DROP); CHECK_EQ(p.a, 3640); CHECK_EQ(p.b, 40);
+    CHECK(!pop(&p));
+
     /* ring picker: completion counter. consumed starts at 0; completion k fills half k % 2 */
     uint32_t c = 0;
     ring_pick_t r = logger_pick(0, &c, 1000);            /* nothing completed */

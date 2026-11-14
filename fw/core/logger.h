@@ -14,6 +14,13 @@ typedef struct {
 void logger_init(logger_t *l);
 /* Queue n consecutive samples (the next ones after l->index). */
 void logger_push(logger_t *l, bytefifo_t *f, const uint8_t *s, uint32_t n);
+/* Queue as many whole LOG chunks (min(left, SP_LOG_MAX) samples each, preceded by a pending DROP)
+   as fit in f right now; stop at the first that does not fit. Returns the samples consumed (0..n);
+   l->index advances only by those. Never counts a loss: the caller keeps the rest and retries, or
+   calls logger_lost for it. */
+uint32_t logger_push_fit(logger_t *l, bytefifo_t *f, const uint8_t *s, uint32_t n);
+/* Queue the pending DROP report on its own, if any. Returns 0 (done, or nothing pending) or -1 (no room). */
+int logger_put_drop(logger_t *l, bytefifo_t *f);
 /* n samples were lost before reaching the logger (DMA ring overrun). */
 void logger_lost(logger_t *l, uint32_t n);
 
