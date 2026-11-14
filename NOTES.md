@@ -120,7 +120,7 @@ Other:
 ## 2026-11-13 — trigger stability
 
 - 3PA1030 is pipelined; stopping its clock between captures makes the first samples of the next
-  capture stale (previous capture's data) → trigger fired at random phase (video docs/IMG_9392.mov).
+  capture stale (previous capture's data) → trigger fired at random phase (video kept locally, not in the repo).
   Fix: discard first 16 samples (scopetest) / keep ADC clock running (real firmware).
 - Verified stable with generator sine at 100 Hz, 333 Hz, 1 kHz, 1.33 kHz, 5 kHz, 7.27 kHz,
   10 kHz, 20 kHz (incl. frequencies not synchronous with the sample clock).
@@ -129,7 +129,7 @@ Other:
 
 ## Factory calibration page (caldump, 2026-11-13)
 
-`parse: VALID factory data` (photo `docs/words.jpg`). Words 0x00..0x26 at 0x08006000:
+`parse: VALID factory data` (photo kept locally, not in the repo). Words 0x00..0x26 at 0x08006000:
 
 ```
 00: 00060055 0B000100 01000100 00000000
@@ -151,7 +151,7 @@ Other:
 ## Hardware checks for sub-project 1 (2026-11-13)
 
 - faulttest: uptime counts 1/s (240 MHz + SysTick OK); RUN → HARD FAULT screen, PC 0x0800722E = the
-  `udf` in main, CFSR 0x00010000 (UNDEFINSTR), HFSR 0x40000000 (FORCED) (photo `docs/hwfaultimg.jpg`);
+  `udf` in main, CFSR 0x00010000 (UNDEFINSTR), HFSR 0x40000000 (FORCED) (photo kept locally, not in the repo);
   Power switches off. `tools/flash.sh` works.
 - Scope app (sub-project 1) verified: boot, timebase sweep 500 ns–50 ms/div, V/div 10 mV–10 V, AC/DC coupling
   direction correct (FE_PC5_FOR_DC=1), trigger Auto/Normal/Single + edges, run/stop, power off,
