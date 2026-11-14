@@ -20,6 +20,7 @@ from scopeclient import ScopeClient  # noqa: E402
 RATES = [1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000]
 MAX_POINTS = 20000        # logger curve points per redraw (min/max decimation above this)
 MAX_WINDOW_S = 60
+MAX_SAMPLES = 5_000_000   # rate x effective window is capped at this
 ERR_SHOW_S = 5
 FLUSH_S = 1.0
 
@@ -214,6 +215,8 @@ class Window(QtWidgets.QWidget):
         t = (p.first_index + np.arange(len(p.samples))) / m.rate_hz
         self.chunks.append((t, self.volts(m, p.samples)))
         self.dirty = True
+        if self.rec_dir and self.log_writer is None:     # Record ticked mid-session: open its file now
+            self.try_roll(m)
         if self.log_writer:
             try:
                 self.log_writer.log(p)
@@ -232,11 +235,17 @@ class Window(QtWidgets.QWidget):
             except OSError as e:
                 self.record_failed(e)
 
+    def effective_window(self):
+        """Requested window, capped so that rate x window <= MAX_SAMPLES."""
+        w = self.window_s.value()
+        rate = self.logmeta.rate_hz if self.logmeta else self.run_rate
+        return min(w, MAX_SAMPLES / rate) if rate else w
+
     def trim(self):
-        """Keep only the last window_s seconds of logger data."""
+        """Keep only the last effective_window() seconds of logger data."""
         if not self.chunks:
             return
-        horizon = self.chunks[-1][0][-1] - self.window_s.value()
+        horizon = self.chunks[-1][0][-1] - self.effective_window()
         while self.chunks and self.chunks[0][0][-1] < horizon:
             self.chunks.popleft()
         if self.chunks:
@@ -288,13 +297,17 @@ class Window(QtWidgets.QWidget):
             self.err.setText("")
         dt = max(1e-3, now - self.stats["t0"])
         conn_txt = "connected" if conn else "reconnecting…"
-        if not self.running:
+        if self.c.last_error:                       # reader thread has stopped for good
+            self.status.setText("client stopped: %s" % self.c.last_error)
+        elif not self.running:
             self.status.setText("stopped · fw %s" % self.fw)
         elif self.run_mode == "Frames":
             self.status.setText("%s · %.1f frames/s · fw %s" % (conn_txt, self.stats["frames"] / dt, self.fw))
         else:
-            self.status.setText("%s · %d samples (%.0f S/s) · dropped %d · fw %s" % (
-                conn_txt, self.stats["samples"], self.stats["samples"] / dt, self.stats["drops"], self.fw))
+            eff = self.effective_window()
+            cap = (" · window %.1f s (capped)" % eff) if eff < self.window_s.value() - 1e-9 else ""
+            self.status.setText("%s · %d samples (%.0f S/s) · dropped %d · fw %s%s" % (
+                conn_txt, self.stats["samples"], self.stats["samples"] / dt, self.stats["drops"], self.fw, cap))
 
     def closeEvent(self, e):
         self.close_log()
