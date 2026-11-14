@@ -6,7 +6,7 @@ static csv_meta_t base(void) {
     memset(&m, 0, sizeof m);
     m.rate_hz = 1000000; m.vdiv_mv = 1000; m.coupling_dc = 1; m.probe_x10 = 0;
     m.trig_mode = 0; m.edge = 0; m.zero_code = 128; m.trig_level_code = 153;
-    m.trig_index = 100; m.offset_pwm = 2033;
+    m.trig_index = 100; m.triggered = 1; m.offset_pwm = 2033;
     return m;
 }
 
@@ -24,6 +24,7 @@ void test_csv(void) {
         "# probe=1\n"
         "# trigger=Auto,rising,1.0000\n"
         "# trigger_index=100\n"
+        "# triggered=1\n"
         "# cal=offset_pwm=2033,volts_per_code=0.040000\n"
         "time_s,volts,adc_code\n");
     CHECK_EQ(csv_header(b, 10, &m), -1);                       /* too small */
@@ -36,6 +37,9 @@ void test_csv(void) {
     CHECK(strstr(b, "# probe=10\n") != 0);
     CHECK(strstr(b, "# trigger=Single,falling,-0.1000\n") != 0);   /* -25 codes * 4 mV */
     CHECK(strstr(b, "volts_per_code=0.004000\n") != 0);
+    m = base(); m.triggered = 0;                                /* untriggered Auto capture */
+    n = csv_header(b, sizeof b, &m); b[n] = 0;
+    CHECK(strstr(b, "# trigger_index=100\n# triggered=0\n# cal=") != 0);
     m = base(); m.trig_mode = 1;
     n = csv_header(b, sizeof b, &m); b[n] = 0;
     CHECK(strstr(b, "# trigger=Normal,rising,") != 0);

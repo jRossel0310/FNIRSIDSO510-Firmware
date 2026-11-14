@@ -40,6 +40,7 @@ int csv_header(char *buf, int cap, const csv_meta_t *m) {
     sb_fx(&b, rdiv((int64_t)(m->trig_level_code - m->zero_code) * uvpc, 100), 4);
     sb_s(&b, "\n# trigger_index=");
     sb_fx(&b, m->trig_index, 0);
+    sb_s(&b, m->triggered ? "\n# triggered=1" : "\n# triggered=0");
     sb_s(&b, "\n# cal=offset_pwm=");
     sb_fx(&b, m->offset_pwm, 0);
     sb_s(&b, ",volts_per_code=");

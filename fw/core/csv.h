@@ -13,7 +13,8 @@ typedef struct {
     uint8_t edge;               /* 0 rising, 1 falling */
     int16_t zero_code;          /* ADC code of 0 V (128 + offset) */
     int16_t trig_level_code;    /* trigger level as ADC code */
-    int32_t trig_index;         /* sample index of the trigger point */
+    int32_t trig_index;         /* sample index of the trigger point (untriggered: screen trigger position) */
+    uint8_t triggered;          /* 1 = trigger found; 0 = untriggered Auto capture */
     uint16_t offset_pwm;        /* offset PWM used for this record */
 } csv_meta_t;
 
