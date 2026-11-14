@@ -3,10 +3,12 @@
 #include "keys.h"
 #include "units.h"
 #include "gen.h"
+#include "measure.h"
 
 #define PLOT_COLS  300
-#define MENU_ITEMS 5
+#define MENU_ITEMS 9
 #define GEN_ROWS   6
+#define AUTO_OFF_NUM 4
 
 enum { TRIG_AUTO = 0, TRIG_NORMAL, TRIG_SINGLE };
 enum { CTL_TIME_VOLT = 0, CTL_POS_OFFSET, CTL_POS_LEVEL, CTL_GEN, CTL_NUM };
@@ -20,6 +22,7 @@ enum { CTL_TIME_VOLT = 0, CTL_POS_OFFSET, CTL_POS_LEVEL, CTL_GEN, CTL_NUM };
 #define CHG_MENU     0x040u   /* menu contents changed */
 #define CHG_GEN      0x1000u  /* generator settings changed: re-apply to the hardware */
 #define CHG_GENPAGE  0x2000u  /* generator page needs a redraw */
+#define CHG_MEAS     0x4000u  /* measurement line needs a redraw */
 #define ACT_AUTOSET  0x100u
 #define ACT_AUTOZERO 0x200u
 #define ACT_POWEROFF 0x400u
@@ -32,8 +35,11 @@ typedef struct {
     int16_t trig_pos;         /* trigger point, plot column 0..299 */
     uint8_t trig_mode, edge, coupling_dc, probe_x10, run, ctl, menu_open, menu_item;
     gen_cfg_t gen;
+    uint8_t meas_sel[3];      /* measurement kinds (MEAS_*) of the three bottom-bar slots */
+    uint8_t auto_off;         /* index into auto_off_min */
     uint8_t gen_open, gen_item;   /* generator page open / selected row (0 Output, 1 Waveform, 2 Frequency, 3 Amplitude, 4 Offset, 5 Duty) */
 } scope_state_t;
 
+extern const uint8_t auto_off_min[AUTO_OFF_NUM];   /* minutes; 0 = never */
 void state_defaults(scope_state_t *s);
 uint32_t control_handle(scope_state_t *s, kev_t ev);

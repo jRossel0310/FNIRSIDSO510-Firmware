@@ -167,20 +167,24 @@ void ui_draw_meas(const scope_state_t *s, const meas_t *m) {
 }
 
 void ui_draw_menu(const scope_state_t *s) {
-    static const char *labels[MENU_ITEMS] = {"Coupling", "Probe", "Trigger", "Edge", "Generator"};
+    static const char *labels[MENU_ITEMS] = {"Coupling", "Probe", "Trigger", "Edge", "Generator",
+                                             "Meas 1", "Meas 2", "Meas 3", "Auto off"};
+    static const char *off_names[AUTO_OFF_NUM] = {"Off", "5 min", "10 min", "30 min"};
     static const char *trig_names[] = {"Auto", "Normal", "Single"};
     const char *vals[MENU_ITEMS] = {
         s->coupling_dc ? "DC" : "AC", s->probe_x10 ? "x10" : "x1",
         trig_names[s->trig_mode], s->edge ? "Falling" : "Rising", "open >",
+        meas_name(s->meas_sel[0]), meas_name(s->meas_sel[1]), meas_name(s->meas_sel[2]),
+        off_names[s->auto_off < AUTO_OFF_NUM ? s->auto_off : 0],
     };
-    lcd_fill(8 * 8 - 4, 3 * 16 - 4, 24 * 8 + 8, 8 * 16 + 8, C_NAVY);
-    lcd_text(8, 3, " SETTINGS   Mode=close  ", C_BLACK, C_CYAN);
+    lcd_fill(6 * 8 - 4, 1 * 16 - 4, 28 * 8 + 8, 11 * 16 + 8, C_NAVY);
+    lcd_text(6, 1, " SETTINGS        Mode=close ", C_BLACK, C_CYAN);
     for (int i = 0; i < MENU_ITEMS; i++) {
         uint16_t bg = i == s->menu_item ? C_GRAY : C_NAVY;
-        lcd_fill(8 * 8, (5 + i) * 16, 24 * 8, 16, bg);
-        lcd_text(9, 5 + i, labels[i], C_WHITE, bg);
-        lcd_text(20, 5 + i, "<       >", C_CYAN, bg);
-        lcd_text(21, 5 + i, vals[i], C_YELLOW, bg);
+        lcd_fill(6 * 8, (3 + i) * 16, 28 * 8, 16, bg);
+        lcd_text(7, 3 + i, labels[i], C_WHITE, bg);
+        lcd_text(19, 3 + i, "<           >", C_CYAN, bg);
+        lcd_text(20, 3 + i, vals[i], C_YELLOW, bg);
     }
 }
 

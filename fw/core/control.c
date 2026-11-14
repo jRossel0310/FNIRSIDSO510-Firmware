@@ -1,5 +1,7 @@
 #include "control.h"
 
+const uint8_t auto_off_min[AUTO_OFF_NUM] = {0, 5, 10, 30};
+
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 void state_defaults(scope_state_t *s) {
@@ -7,6 +9,7 @@ void state_defaults(scope_state_t *s) {
     s->trig_level = 128; s->trig_pos = PLOT_COLS / 2;
     s->trig_mode = TRIG_AUTO; s->edge = 0; s->coupling_dc = 1; s->probe_x10 = 0;
     s->run = 1; s->ctl = CTL_TIME_VOLT; s->menu_open = 0; s->menu_item = 0;
+    s->meas_sel[0] = MEAS_FREQ; s->meas_sel[1] = MEAS_DUTY_P; s->meas_sel[2] = MEAS_VPP; s->auto_off = 2;
     gen_defaults(&s->gen); s->gen_open = 0; s->gen_item = 0;
 }
 
@@ -54,6 +57,12 @@ static uint32_t menu_key(scope_state_t *s, int k, int t, int tap) {
         case 1: s->probe_x10 ^= 1; return CHG_MENU | CHG_BARS;
         case 2: s->trig_mode = (uint8_t)((s->trig_mode + 3 + d) % 3); return CHG_MENU | CHG_BARS | CHG_TRIG;
         case 3: s->edge ^= 1; return CHG_MENU | CHG_BARS | CHG_TRIG;
+        case 5: case 6: case 7: {
+            uint8_t *m = &s->meas_sel[s->menu_item - 5];
+            *m = (uint8_t)((*m + MEAS_NUM + d) % MEAS_NUM);
+            return CHG_MENU | CHG_MEAS;
+        }
+        case 8: s->auto_off = (uint8_t)((s->auto_off + AUTO_OFF_NUM + d) % AUTO_OFF_NUM); return CHG_MENU;
         }
     }
     return 0;

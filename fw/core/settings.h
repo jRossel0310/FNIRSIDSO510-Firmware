@@ -3,8 +3,10 @@
 #include "control.h"
 #include "cal.h"
 
-/* Persistent settings file (DSS1, version 1): 154 payload bytes + CRC-16 (low byte first). */
-#define SETTINGS_LEN 156u
+/* Persistent settings file (DSS1, version 2): 158 payload bytes + CRC-16 (low byte first).
+   Version 1 (156 bytes, no measurement slots / auto-off) is still read. */
+#define SETTINGS_LEN    160u
+#define SETTINGS_LEN_V1 156u
 
 /* Serialise the persistent settings into out[SETTINGS_LEN]. zeroed != 0: cal's lo/hi tables are stored as the auto-zero result. */
 void settings_pack(uint8_t *out, const scope_state_t *s, const cal_t *cal, int zeroed);

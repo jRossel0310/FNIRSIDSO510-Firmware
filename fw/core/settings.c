@@ -6,7 +6,10 @@
 #define OFF_VDIV  10
 #define OFF_LO    34
 #define OFF_HI    94
-#define OFF_CRC   154
+#define OFF_MEAS  154
+#define OFF_AUTO  157
+#define OFF_CRC   158
+#define OFF_CRC_V1 154
 
 static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 static void put32(uint8_t *p, uint32_t v) {
@@ -23,7 +26,7 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
 void settings_pack(uint8_t *out, const scope_state_t *s, const cal_t *cal, int zeroed) {
     for (uint32_t i = 0; i < SETTINGS_LEN; i++) out[i] = 0;
     out[0] = 'D'; out[1] = 'S'; out[2] = 'S'; out[3] = '1';
-    out[4] = 1;
+    out[4] = 2;
     out[OFF_FLAGS] = zeroed ? 1 : 0;
     put32(out + OFF_TDIV, tdiv_ns[s->tdiv]);
     put16(out + OFF_VDIV, vdiv_mv[s->vdiv]);
@@ -41,14 +44,20 @@ void settings_pack(uint8_t *out, const scope_state_t *s, const cal_t *cal, int z
             put16(out + OFF_LO + 2 * (k * CAL_NRANGES + r), cal->lo[k][r]);
             put16(out + OFF_HI + 2 * (k * CAL_NRANGES + r), cal->hi[k][r]);
         }
+    for (int i = 0; i < 3; i++) out[OFF_MEAS + i] = s->meas_sel[i];
+    out[OFF_AUTO] = s->auto_off;
     put16(out + OFF_CRC, sp_crc16(0xFFFF, out, OFF_CRC));
 }
 
 int settings_unpack(const uint8_t *in, uint32_t len, scope_state_t *s, cal_t *cal, int *zeroed) {
-    if (len != SETTINGS_LEN) return 0;
+    int v2;
+    if (len == SETTINGS_LEN) v2 = 1;
+    else if (len == SETTINGS_LEN_V1) v2 = 0;
+    else return 0;
     if (in[0] != 'D' || in[1] != 'S' || in[2] != 'S' || in[3] != '1') return 0;
-    if (in[4] != 1) return 0;
-    if (get16(in + OFF_CRC) != sp_crc16(0xFFFF, in, OFF_CRC)) return 0;
+    if (in[4] != (v2 ? 2 : 1)) return 0;
+    uint32_t crc_off = v2 ? OFF_CRC : OFF_CRC_V1;
+    if (get16(in + crc_off) != sp_crc16(0xFFFF, in, crc_off)) return 0;
 
     uint32_t ns = get32(in + OFF_TDIV);
     uint16_t mv = get16(in + OFF_VDIV);
@@ -71,6 +80,14 @@ int settings_unpack(const uint8_t *in, uint32_t len, scope_state_t *s, cal_t *ca
     g.freq_hz = get32(in + 30);
     gen_clamp(&g);
 
+    uint8_t meas_sel[3], auto_off = 2;
+    static const uint8_t meas_def[3] = {MEAS_FREQ, MEAS_DUTY_P, MEAS_VPP};
+    for (int i = 0; i < 3; i++) meas_sel[i] = meas_def[i];
+    if (v2) {
+        for (int i = 0; i < 3; i++) meas_sel[i] = in[OFF_MEAS + i] < MEAS_NUM ? in[OFF_MEAS + i] : meas_def[i];
+        auto_off = in[OFF_AUTO] < AUTO_OFF_NUM ? in[OFF_AUTO] : 2;
+    }
+
     int take_cal = (in[OFF_FLAGS] & 1) != 0;
     uint16_t lo[CAL_NSETS][CAL_NRANGES], hi[CAL_NSETS][CAL_NRANGES];
     for (int k = 0; k < CAL_NSETS; k++)
@@ -85,6 +102,7 @@ int settings_unpack(const uint8_t *in, uint32_t len, scope_state_t *s, cal_t *ca
     s->trig_level = trig_level; s->trig_pos = trig_pos; s->trig_mode = trig_mode;
     s->edge = edge; s->coupling_dc = coupling_dc; s->probe_x10 = probe_x10; s->ctl = ctl;
     s->gen = g;
+    if (v2) { for (int i = 0; i < 3; i++) s->meas_sel[i] = meas_sel[i]; s->auto_off = auto_off; }
     if (take_cal) {
         for (int k = 0; k < CAL_NSETS; k++)
             for (int r = 0; r < CAL_NRANGES; r++) { cal->lo[k][r] = lo[k][r]; cal->hi[k][r] = hi[k][r]; }

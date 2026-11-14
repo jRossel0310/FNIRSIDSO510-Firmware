@@ -551,8 +551,9 @@ int main(void) {
     {   /* stored settings (before USB starts, so nobody else is using the volume) */
         static uint8_t b[SETTINGS_LEN];
         int z = 0;
-        if (cfgfile_load(b, sizeof b) == (int)SETTINGS_LEN && settings_unpack(b, SETTINGS_LEN, &st, &cal, &z)) {
-            memcpy(cfg_saved, b, SETTINGS_LEN); cfg_have = 1;
+        int n = cfgfile_load(b, sizeof b);
+        if (n > 0 && n <= (int)sizeof b && settings_unpack(b, (uint32_t)n, &st, &cal, &z)) {
+            settings_pack(cfg_saved, &st, &cal, z); cfg_have = 1;
             if (z) zeroed = 1;
         }
     }
