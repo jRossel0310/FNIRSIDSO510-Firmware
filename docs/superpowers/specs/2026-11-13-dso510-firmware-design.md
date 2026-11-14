@@ -100,9 +100,7 @@ Same as stock: HEXT 8 MHz / 2 × 60 = 240 MHz SYSCLK; APB1 = APB2 = 120 MHz; tim
 - Each timebase maps to a sample rate (table, like stock `FUN_0801A95C`).
 - **≤ 12 MS/s:** single stream — TMR4 CH3 PWM on PB8 clocks the ADC, TMR4 overflow requests
   DMA1 ch7 (flex request 0x4F) reading GPIOB->IDT byte-wide. Proven in `scopetest`.
-- **24 / 48 MS/s (sub-project 1b, separate plan):** stock 4-way interleave — four phase-staggered timers (TMR8/5/3/1 in stock)
-  pacing DMA2 ch1, DMA2 ch2, DMA1 ch3, DMA1 ch5 into four sub-buffers, re-interleaved in software.
-  Exact timer phasing to be reproduced from stock `FUN_0801AD00`.
+- **24 / 48 MS/s (sub-project 1b):** real-time 4-way interleave, see § "Sub-project 1b: interleaved capture".
 - Sub-project 1 targets 120 samples/div (rate = 120 / (s/div), capped at 12 MS/s), so timebases
   500 ns/div … 50 ms/div; below 30 samples/div the display connects samples with straight lines.
   50–200 ns/div arrive with 1b.
@@ -401,3 +399,46 @@ directly: unipolar, about 0 … 3.1 V (code 548…3548 measured as 0.44…2.72 V
 - On device: probe on the generator output; each waveform looks right; frequency, Vpp and duty agree with
   the scope's measurements; quick-mode frequency sweep while watching the trace; scope capture, CSV save and
   streaming still work with the generator running.
+
+## Sub-project 1b: interleaved capture (24 / 48 MS/s)
+
+Real-time, single-shot sampling above the 12 MS/s a single DMA channel can move. Scheme from stock
+`FUN_0801AD00`, measured on hardware with the `ilvtest` bench app (2026-11-13, see `NOTES.md`).
+
+### Scheme
+
+- The ADC is clocked at 48 MHz: TMR4 with reload 4, CH3 PWM compare 3 on PB8. TMR4's update event is its trigger
+  output (TRGO).
+- Four slave timers in gated mode count TMR4's TRGO pulses, period 4, so each overflows at 12 MHz, one ADC clock
+  apart. Each overflow requests one DMA transfer of GPIOB->IDT into its own sub-buffer:
+  stream 0 = TMR3 -> DMA1 ch3 (request 0x47), stream 1 = TMR5 -> DMA2 ch2 (0x57), stream 2 = TMR1 -> DMA1 ch5
+  (0x37), stream 3 = TMR8 -> DMA2 ch1 (0x6F). Slave trigger input: ITR3 for TMR3 and TMR1, ITR2 for TMR5 and TMR8.
+- Sample j of the 48 MS/s record is stream j mod 4, index j / 4 (measured: stream delays 0, 1, 2, 3 ADC clocks).
+- 24 MS/s uses streams 0 and 2 only, with the ADC still clocked at 48 MHz. (Clocking the ADC at 24 MHz with four
+  streams was measured and gives inconsistent stream timing.)
+- **Start without stopping the ADC clock:** TMR4 keeps running; the slaves are frozen by switching TMR4's TRGO
+  off (master mode 000), armed, and released together by switching TRGO back to "update". Stock stops TMR4 instead,
+  which leaves stale samples in the ADC pipeline.
+- **No stream may overflow on the first tick.** A slave started at count = reload catches or misses its first
+  overflow at random (measured: about 1-6 % of captures, 28 % in a slow poke-driven test, had that stream one
+  sample early). Fix: the slaves use reload preload; the first period is 8 ticks (reload 7, start counts 6, 5, 4, 3
+  for streams 0..3), the preloaded reload 3 takes over from the first overflow. Measured: no whole-sample slip.
+- A DMA channel serves one stale request when it is armed. The driver arms one extra sample per stream and reads
+  the transfer count before the release to know how many leading samples to skip (0 or 1).
+
+### Timebases and rates
+
+- New timebases 50, 100 and 200 ns/div (19 timebases in total).
+- Rate = 120 samples/div where possible: 5 us/div -> 24 MS/s; 2 us/div and faster -> 48 MS/s (96, 48, 24, 9.6, 4.8
+  and 2.4 samples/div at 2 us ... 50 ns). 10 us/div and slower are unchanged (single stream, <= 12 MS/s).
+- Record: 4 screens, at most 4800 samples, as before. The raw streams are captured into a separate 4804-byte
+  buffer and woven into the record; trigger search, measurements, CSV and streaming work on the woven record.
+- Offset calibration uses the factory "interleaved" set (`CAL_SET_FAST`) above 12 MS/s; auto-zero also covers it.
+- The RAM budget for bss rises from 64 KiB to 72 KiB (of 96 KiB).
+
+### Testing
+
+- Host: rate table for all 19 timebases; weaving for 2 and 4 streams with skips.
+- Device: `ilvtest` bench (done). In the scope app: a 50 kHz triangle and a 20 kHz square from the generator at
+  5, 2 and 1 us/div look smooth (no comb pattern); the frequency reading stays right; 50-200 ns/div draw; CSV save
+  and frame streaming report 24 / 48 MS/s; slower timebases, the logger and the generator are unaffected.

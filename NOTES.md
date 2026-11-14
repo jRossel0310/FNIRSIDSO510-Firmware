@@ -218,3 +218,21 @@ Other:
 - Parked for sub-project 5: planner search cost near 50 kHz (est. ~10 ms, not measured); DC level and wave offset
   share one setting; quick mode with DC selected changes an amplitude that has no effect; wheel rotation on the
   Generator menu row opens the page and a further tick toggles Output; amplitude accuracy not checked with a meter.
+
+## Interleaved capture experiments (ilvtest, 2026-11-13)
+
+Bench app `fw/apps/ilvtest` (PC-driven over the serial port: register peek/poke, generator, captures).
+Probe on the generator output, range 6, generator as signal source.
+- Stock scheme decoded from `FUN_0801AD00`: TMR4 reload 4 (48 MHz ADC clock, CH3 compare 3), TRGO = update;
+  TMR8/5/3/1 gated slaves (SMS 5; ITR2, ITR2, ITR3, ITR3), reload 3, start counts 3, 1, 2, 0; overflow DMA requests
+  0x6F / 0x57 / 0x47 / 0x37 on DMA2 ch1 / DMA2 ch2 / DMA1 ch3 / DMA1 ch5.
+- 48 MS/s works: stream delays (TMR3, TMR5, TMR1, TMR8) = 0, 0.98, 2.02, 3.04 ADC clocks (std 0.07), so the
+  record order is TMR3, TMR5, TMR1, TMR8. Per-phase mean residual on a 10 kHz sine < 0.04 code.
+- Keeping the ADC clock running and freezing the slaves through TMR4's TRGO (master mode 000 <-> 010) works as
+  well as the stock stop-TMR4 start.
+- With either start, the TMR8 stream (start count 3 = reload) is sometimes one sample early: 3/400 and 1/212
+  captures from firmware, 7/25 in a slow poke-driven run. With reload preload (first period 8, start counts
+  6, 5, 4, 3, then reload 3): 0/40 whole-sample slips.
+- Every armed DMA channel immediately serves one stale request (count 257 -> 256 before the release).
+- ADC clocked at 24 MHz (TMR4 reload 9) with four streams: stream delays inconsistent (-0.9, 0.2, -1.3 clocks).
+  24 MS/s should use two streams of the 48 MHz scheme instead.
