@@ -7,9 +7,40 @@ void state_defaults(scope_state_t *s) {
     s->trig_level = 128; s->trig_pos = PLOT_COLS / 2;
     s->trig_mode = TRIG_AUTO; s->edge = 0; s->coupling_dc = 1; s->probe_x10 = 0;
     s->run = 1; s->ctl = CTL_TIME_VOLT; s->menu_open = 0; s->menu_item = 0;
+    gen_defaults(&s->gen); s->gen_open = 0; s->gen_item = 0;
+}
+
+static uint32_t gen_key(scope_state_t *s, int k, int t, int tap) {
+    gen_cfg_t *g = &s->gen;
+    if (k == KEY_MODE && (t == KEV_SHORT || t == KEV_LONG)) { s->gen_open = 0; return CHG_SCREEN; }
+    if (k == KEY_UP && tap) { s->gen_item = (uint8_t)((s->gen_item + GEN_ROWS - 1) % GEN_ROWS); return CHG_GENPAGE; }
+    if (k == KEY_DOWN && tap) { s->gen_item = (uint8_t)((s->gen_item + 1) % GEN_ROWS); return CHG_GENPAGE; }
+    if (k == KEY_WHEEL_PRESS && t == KEV_SHORT && s->gen_item == 2) { g->fine ^= 1; return CHG_GENPAGE | CHG_BARS; }
+    if ((k == KEY_WHEEL_L || k == KEY_WHEEL_R) && tap) {
+        int d = k == KEY_WHEEL_R ? 1 : -1;
+        gen_cfg_t old = *g;
+        switch (s->gen_item) {
+        case 0: g->on ^= 1; break;
+        case 1: g->wave = (uint8_t)((g->wave + GEN_NUM_WAVES + d) % GEN_NUM_WAVES); break;
+        case 2: g->freq_hz = gen_freq_step(g->freq_hz, d, g->fine); break;
+        case 3: g->amp_dv = (uint8_t)clampi(g->amp_dv + d, 1, GEN_AMP_MAX_DV); break;
+        case 4: g->offset_dv = (uint8_t)clampi(g->offset_dv + d, 0, GEN_OFF_MAX_DV); break;
+        default: g->duty_pct = (uint8_t)clampi(g->duty_pct + d, 1, 99); break;
+        }
+        gen_clamp(g);
+        if (g->on == old.on && g->wave == old.wave && g->fine == old.fine && g->duty_pct == old.duty_pct &&
+            g->amp_dv == old.amp_dv && g->offset_dv == old.offset_dv && g->freq_hz == old.freq_hz) return 0;
+        return CHG_GEN | CHG_GENPAGE | CHG_BARS;
+    }
+    return 0;
 }
 
 static uint32_t menu_key(scope_state_t *s, int k, int t, int tap) {
+    if (s->menu_item == 4 && ((k == KEY_WHEEL_PRESS && t == KEV_SHORT) ||
+                              ((k == KEY_WHEEL_L || k == KEY_WHEEL_R) && tap))) {
+        s->menu_open = 0; s->gen_open = 1; s->gen_item = 0;
+        return CHG_SCREEN;
+    }
     if ((k == KEY_MODE || k == KEY_WHEEL_PRESS) && t == KEV_SHORT) { s->menu_open = 0; return CHG_SCREEN; }
     if (k == KEY_UP && tap) { s->menu_item = (uint8_t)((s->menu_item + MENU_ITEMS - 1) % MENU_ITEMS); return CHG_MENU; }
     if (k == KEY_DOWN && tap) { s->menu_item = (uint8_t)((s->menu_item + 1) % MENU_ITEMS); return CHG_MENU; }
@@ -28,9 +59,10 @@ static uint32_t menu_key(scope_state_t *s, int k, int t, int tap) {
 uint32_t control_handle(scope_state_t *s, kev_t ev) {
     int k = ev.key, t = ev.type, tap = (t == KEV_SHORT || t == KEV_REPEAT);
     if (k == KEY_POWER) return t == KEV_LONG ? ACT_POWEROFF : 0;
+    if (s->gen_open) return gen_key(s, k, t, tap);
     if (k == KEY_MODE && t == KEV_LONG) { s->menu_open ^= 1; s->menu_item = 0; return CHG_SCREEN; }
     if (s->menu_open) return menu_key(s, k, t, tap);
-    if (k == KEY_MODE && t == KEV_SHORT) { s->ctl = (uint8_t)((s->ctl + 1) % 3); return CHG_BARS; }
+    if (k == KEY_MODE && t == KEV_SHORT) { s->ctl = (uint8_t)((s->ctl + 1) % CTL_NUM); return CHG_BARS; }
     if (k == KEY_RUN && t == KEV_SHORT) { s->run ^= 1; return CHG_RUN | CHG_BARS; }
     if (k == KEY_RUN && t == KEV_LONG) return ACT_SAVE;
     if (k == KEY_AUTO && t == KEV_SHORT) return ACT_AUTOSET;
@@ -38,6 +70,21 @@ uint32_t control_handle(scope_state_t *s, kev_t ev) {
     if (!tap) return 0;
     int h = k == KEY_WHEEL_R ? 1 : k == KEY_WHEEL_L ? -1 : 0;
     int v = k == KEY_UP ? 1 : k == KEY_DOWN ? -1 : 0;
+    if (s->ctl == CTL_GEN) {
+        gen_cfg_t *g = &s->gen;
+        if (k == KEY_WHEEL_PRESS && t == KEV_SHORT) { g->fine ^= 1; return CHG_BARS; }
+        if (h) {
+            uint32_t f = gen_freq_step(g->freq_hz, h, g->fine);
+            if (f == g->freq_hz) return 0;
+            g->freq_hz = f; return CHG_GEN | CHG_BARS;
+        }
+        if (v) {
+            int a = clampi(g->amp_dv + v, 1, GEN_AMP_MAX_DV);
+            if (a == g->amp_dv) return 0;
+            g->amp_dv = (uint8_t)a; gen_clamp(g); return CHG_GEN | CHG_BARS;
+        }
+        return 0;
+    }
     if (s->ctl == CTL_TIME_VOLT) {
         if (h) {
             int n = clampi(s->tdiv + h, 0, NUM_TDIV - 1);

@@ -1,7 +1,7 @@
 # DSO-510 replacement firmware — design
 
 Date: 2026-11-13
-Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run).
+Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run). Sub-project 3 (function generator) done and verified on hardware 2026-11-13 (amplitude not checked with a meter).
 
 ## Goal
 
@@ -355,3 +355,49 @@ Each command gets OK or ERR (unknown command, unsupported rate, or scope busy, e
 
 Full remote control of scope settings (timebase, V/div, trigger) from the PC, streaming over anything but
 USB, Windows/macOS-specific packaging.
+
+## Sub-project 3: function generator
+
+Approved in conversation 2026-11-13 (built after sub-project 4). Hardware: DAC1 on PA4, triggered by TMR6,
+fed by DMA2 channel 3 (flex request 0x05) from a RAM table, circular (`NOTES.md`). Output is the DAC pin
+directly: unipolar, about 0 … 3.1 V (code 548…3548 measured as 0.44…2.72 V → ≈ 0.76 mV per code).
+
+### Signal
+
+- Waveforms: sine, square (duty 1–99 %), triangle, sawtooth (rising), DC, half-wave rectified sine,
+  full-wave rectified sine, exponential rise, exponential fall. (Stock step, anti-step, multi-tone, sinc and
+  Lorentz are out of scope.)
+- Frequency 1 Hz … 50 kHz. A table of n points (n ≤ 400) holds m whole periods, with at least 20 points per period, played at TMR6's update rate (≤ 1 MS/s): f = 240 MHz × m / (timer divider × n). The planner prefers one period and the longest table and adds periods only when needed for accuracy. For a requested frequency the planner picks n, m and the timer divider (prescaler ×
+  reload at 240 MHz) that minimise the frequency error; the error is at most 0.1 % for every settable
+  frequency (three significant digits), and the UI shows the actual frequency.
+- Amplitude 0.1 … 3.0 Vpp in 0.1 V steps; offset = centre voltage in 0.1 V steps, clamped so the waveform
+  stays within 0 … 3.1 V (for DC the offset is the level, 0 … 3.1 V). Volts → DAC code uses 3.1 V full scale
+  (4095); accuracy ±5 % until checked with a meter.
+- Exponential waveforms use five time constants per period (rise: 1 − e^(−5x), fall: e^(−5x), x = 0…1),
+  normalised to span the full amplitude.
+- The generator runs entirely on DAC + timer + DMA hardware: no CPU time while running, so capture, CSV
+  save and streaming are unaffected. Changing a setting rebuilds the table (output glitches for a few ms).
+- Power-on default: output on, sine, 1 kHz, 2.0 Vpp, offset 1.5 V. Settings are not persisted
+  (sub-project 5).
+
+### Controls
+
+- Menu (long-press Mode) gains a `Generator` item that opens the generator page: rows Output (On/Off),
+  Waveform, Frequency, Amplitude, Offset, Duty. Up/Down selects the row, the wheel changes the value, Mode
+  closes the page. The scope keeps capturing while the page is open (as with the menu today: the trace is
+  held).
+- Frequency row: wheel steps 1-2-5 (1, 2, 5, 10, … 50 k); wheel press toggles fine steps (1 % of the current
+  decade, e.g. 10 Hz between 1 kHz and 10 kHz), shown on the row.
+- Short-press Mode cycle gains a fourth control mode `Gen Freq | Amp`: wheel = frequency (same stepping,
+  wheel press toggles fine), Up/Down = amplitude.
+- The top bar shows a `G` marker while the output is on; in the `Gen` control mode the mode label shows the live frequency and amplitude (e.g. `Gen 1kHz 2.0V`; `Gen 1.01kHz~2.0V` = fine steps).
+- No PC control of the generator (scope only).
+
+### Testing
+
+- Host: waveform table generation (min/max, key points, duty, exponential end points), frequency planner
+  (N and divider limits, error ≤ 0.1 % for 1 Hz, 50 Hz, 1 kHz, 33 333 Hz, 50 kHz and a sweep), amplitude/offset
+  clamping and volts→code, key handling for the page and the quick mode.
+- On device: probe on the generator output; each waveform looks right; frequency, Vpp and duty agree with
+  the scope's measurements; quick-mode frequency sweep while watching the trace; scope capture, CSV save and
+  streaming still work with the generator running.

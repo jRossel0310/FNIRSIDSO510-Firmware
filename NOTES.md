@@ -203,3 +203,18 @@ Other:
 - OK/ERR replies arrive even mid-log at 500 kS/s.
 - `tools/scope_live.py` (venv `~/.venvs/dso`): user checked the live window ("looks good for now").
 - Not run: long (minutes) logger soak, replug/save-during-stream robustness steps, Windows/macOS.
+
+## Hardware checks for sub-project 3 (2026-11-13)
+
+- Generator driver (`gendac.c`): DAC1/PA4 + TMR6 + DMA2 ch3 works first boot with TEN/DMAEN set while the DAC is
+  already enabled (differs from the order in `gen_sine_init`; no problem on the AT32F403A).
+- User ran the full list and reported "everything passed": power-on 1 kHz sine ~2.0 Vpp with the `G` marker; all nine
+  waveforms; square duty 30/70 %; DC level via Offset; Output Off/On; 10 Hz / 1 kHz / 10 kHz / 33.3 kHz / 50 kHz;
+  0.1 / 1.0 / 3.0 Vpp; quick `Gen` mode (wheel = frequency, Up/Down = amplitude, wheel press = fine `~`); CSV save
+  and USB drive with the generator running; output stops at power-off.
+- Streaming with the generator running (default 1 kHz sine, 500 mV/div): Frames 150 frames in 3 s, 0 bad CRC, codes
+  77..178 around zero 55 -> 0.44..2.46 V (2.02 Vpp, centre 1.45 V). Logger 100 kS/s for 10 s: 968 packets
+  (~991 k samples), no DROP packets, 0 bad CRC.
+- Parked for sub-project 5: planner search cost near 50 kHz (est. ~10 ms, not measured); DC level and wave offset
+  share one setting; quick mode with DC selected changes an amplitude that has no effect; wheel rotation on the
+  Generator menu row opens the page and a further tick toggles Output; amplitude accuracy not checked with a meter.

@@ -22,6 +22,8 @@
 #include <string.h>
 #include "stream.h"
 #include "logger.h"
+#include "gen.h"
+#include "gendac.h"
 
 #define REC_MAX (4 * 1200)
 
@@ -53,7 +55,22 @@ static uint8_t usb_marker;      /* "USB" shown in the top bar (frames streaming)
 static const char *toast_msg;
 static void toast(const char *msg, uint32_t ms) { toast_msg = msg; ui_toast(msg); toast_until = millis() + ms; }
 /* Status bars; re-show an active toast, since the mode label shares its columns. */
-static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); if (usb_marker) ui_draw_usb(1); }
+static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg);
+                         if (!toast_until) ui_draw_gen_marker(st.gen.on);   /* a toast covers cols 19..32 */
+                         if (usb_marker) ui_draw_usb(1); }
+
+static uint16_t gen_tab[GEN_N_MAX];      /* played by DMA: must stay static */
+static gen_plan_t gen_pl;
+
+/* Push the generator settings to the hardware. */
+static void gen_apply(void) {
+    gen_clamp(&st.gen);
+    gen_pl = gen_plan(st.gen.wave == GEN_DC ? 1000u : st.gen.freq_hz);
+    if (!st.gen.on) { gendac_off(); return; }
+    gendac_hold();                        /* DMA must not read the table while it is rewritten */
+    gen_table(&st.gen, &gen_pl, gen_tab);
+    gendac_load(gen_tab, gen_pl.n, gen_pl.psc, gen_pl.arr);
+}
 
 static uint16_t fe_pwm;          /* offset PWM last applied */
 static uint32_t fe_settle_need;  /* settle time owed by the last apply_fe() */
@@ -112,6 +129,7 @@ static void redraw_all(void) {
     if (have_trace) { ui_draw_trace(spans); ui_draw_meas(&st, &last_meas); }
     next_batt = millis();
     if (st.menu_open) ui_draw_menu(&st);
+    if (st.gen_open) ui_draw_gen(&st, gen_pl.actual_mhz);
 }
 
 static void process_capture(void) {
@@ -314,6 +332,7 @@ static void do_autozero(void) {
 }
 
 static void power_down(void) {
+    gendac_off();                /* no signal on the BNC while the scope is off */
     adc_abort();                 /* stop the logger ring DMA before power-off */
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);
@@ -370,7 +389,7 @@ static int hook_log_start(uint32_t rate) {
     rate_cfg_t q = units_rate_for_hz(rate);
     if (!q.rate_hz) return -1;
     adc_abort(); armed = 0;
-    st.menu_open = 0;
+    st.menu_open = 0; st.gen_open = 0;
     rc = q;                              /* apply_fe uses rc.rate_hz for the cal set */
     adc_set_rate(q.psc, q.arr);
     apply_fe();
@@ -485,7 +504,7 @@ int main(void) {
     msc_init(&msc, &vol_disk);
     usbd_init(&msc);
     stream_init(&hooks);
-    gen_sine_init(2399);          /* 1 kHz test sine until sub-project 3 adds the generator UI */
+    gendac_init(); gen_apply();
     apply_time();
     redraw_all();
     backlight(1);
@@ -509,11 +528,13 @@ int main(void) {
             if (st.vdiv != trace_vdiv || st.probe_x10 != trace_x10) have_trace = 0;   /* held Vpp would be mis-scaled */
         }
         if (chg & CHG_RUN) { adc_abort(); armed = 0; }
+        if (chg & CHG_GEN) gen_apply();
         if (chg & CHG_SCREEN) redraw_all();
         else {
             if (chg & CHG_BARS) draw_bars();
             if (chg & (CHG_TRIG | CHG_FE)) ui_draw_markers(&st);
             if ((chg & CHG_MENU) && st.menu_open) ui_draw_menu(&st);
+            if ((chg & CHG_GENPAGE) && st.gen_open) ui_draw_gen(&st, gen_pl.actual_mhz);
         }
         if (chg & ACT_SAVE) {
             if (!have_trace || !shown) toast(" No capture   ", 1500);
@@ -527,7 +548,7 @@ int main(void) {
         if (chg & ACT_AUTOSET) do_autoset();
         if (chg & ACT_AUTOZERO) do_autozero();
 
-        if (st.run && !st.menu_open) {
+        if (st.run && !st.menu_open && !st.gen_open) {
             if (!armed) {
                 if ((int32_t)(millis() - settle_until) >= 0) {   /* not while the front end settles */
                     adc_start(rec, (uint16_t)rec_n); armed = 1; armed_at = millis();
