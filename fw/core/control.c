@@ -24,12 +24,15 @@ static uint32_t gen_key(scope_state_t *s, int k, int t, int tap) {
         case 1: g->wave = (uint8_t)((g->wave + GEN_NUM_WAVES + d) % GEN_NUM_WAVES); break;
         case 2: g->freq_hz = gen_freq_step(g->freq_hz, d, g->fine); break;
         case 3: g->amp_dv = (uint8_t)clampi(g->amp_dv + d, 1, GEN_AMP_MAX_DV); break;
-        case 4: g->offset_dv = (uint8_t)clampi(g->offset_dv + d, 0, GEN_OFF_MAX_DV); break;
+        case 4:
+            if (g->wave == GEN_DC) g->dc_dv = (uint8_t)clampi(g->dc_dv + d, 0, GEN_OFF_MAX_DV);
+            else g->offset_dv = (uint8_t)clampi(g->offset_dv + d, 0, GEN_OFF_MAX_DV);
+            break;
         default: g->duty_pct = (uint8_t)clampi(g->duty_pct + d, 1, 99); break;
         }
         gen_clamp(g);
         if (g->on == old.on && g->wave == old.wave && g->fine == old.fine && g->duty_pct == old.duty_pct &&
-            g->amp_dv == old.amp_dv && g->offset_dv == old.offset_dv && g->freq_hz == old.freq_hz) return 0;
+            g->amp_dv == old.amp_dv && g->offset_dv == old.offset_dv && g->dc_dv == old.dc_dv && g->freq_hz == old.freq_hz) return 0;
         return CHG_GEN | CHG_GENPAGE | CHG_BARS;
     }
     return 0;
@@ -77,6 +80,11 @@ uint32_t control_handle(scope_state_t *s, kev_t ev) {
             uint32_t f = gen_freq_step(g->freq_hz, h, g->fine);
             if (f == g->freq_hz) return 0;
             g->freq_hz = f; return CHG_GEN | CHG_BARS;
+        }
+        if (v && g->wave == GEN_DC) {
+            int l = clampi(g->dc_dv + v, 0, GEN_OFF_MAX_DV);
+            if (l == g->dc_dv) return 0;
+            g->dc_dv = (uint8_t)l; return CHG_GEN | CHG_BARS;
         }
         if (v) {
             int a = clampi(g->amp_dv + v, 1, GEN_AMP_MAX_DV);

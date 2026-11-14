@@ -2,7 +2,7 @@
 
 void gen_defaults(gen_cfg_t *g) {
     g->on = 1; g->wave = GEN_SINE; g->fine = 0; g->duty_pct = 50;
-    g->amp_dv = 20; g->offset_dv = 15; g->freq_hz = 1000;
+    g->amp_dv = 20; g->offset_dv = 15; g->dc_dv = 15; g->freq_hz = 1000;
 }
 
 void gen_clamp(gen_cfg_t *g) {
@@ -13,10 +13,7 @@ void gen_clamp(gen_cfg_t *g) {
     if (g->duty_pct > 99) g->duty_pct = 99;
     if (g->amp_dv < 1) g->amp_dv = 1;
     if (g->amp_dv > GEN_AMP_MAX_DV) g->amp_dv = GEN_AMP_MAX_DV;
-    if (g->wave == GEN_DC) {
-        if (g->offset_dv > GEN_OFF_MAX_DV) g->offset_dv = GEN_OFF_MAX_DV;
-        return;
-    }
+    if (g->dc_dv > GEN_OFF_MAX_DV) g->dc_dv = GEN_OFF_MAX_DV;
     /* centre*100 - amp*50 >= 0 and centre*100 + amp*50 <= 3100 (mV) */
     int lo = (g->amp_dv + 1) / 2, hi = (GEN_FS_MV - g->amp_dv * 50) / 100;
     if (g->offset_dv < lo) g->offset_dv = (uint8_t)lo;
@@ -124,7 +121,7 @@ void gen_table(const gen_cfg_t *g, const gen_plan_t *p, uint16_t *out) {
         }
         if (s < 0.0f) s = 0.0f;
         if (s > 1.0f) s = 1.0f;
-        int32_t mv = g->wave == GEN_DC ? (int32_t)g->offset_dv * 100
+        int32_t mv = g->wave == GEN_DC ? (int32_t)g->dc_dv * 100
                                        : lo_mv + (int32_t)(s * (float)(hi_mv - lo_mv) + 0.5f);
         out[i] = gen_code_mv(mv);
     }

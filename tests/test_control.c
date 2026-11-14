@@ -171,4 +171,22 @@ void test_control_gen(void) {
     state_defaults(&s); s.gen_open = 1; s.gen_item = 5;
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_GEN | CHG_GENPAGE | CHG_BARS);
     CHECK_EQ(s.gen.duty_pct, 51);
+
+    /* DC level has its own field */
+    state_defaults(&s); s.gen_open = 1; s.gen.wave = GEN_DC; s.gen_item = 4;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_GEN | CHG_GENPAGE | CHG_BARS);
+    CHECK_EQ(s.gen.dc_dv, 16); CHECK_EQ(s.gen.offset_dv, 15);
+    s.gen.dc_dv = 31;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), 0);
+    state_defaults(&s); s.gen_open = 1; s.gen_item = 4;
+    control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R));
+    CHECK_EQ(s.gen.offset_dv, 16); CHECK_EQ(s.gen.dc_dv, 15);
+    state_defaults(&s); s.ctl = CTL_GEN; s.gen.wave = GEN_DC;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), CHG_GEN | CHG_BARS);
+    CHECK_EQ(s.gen.dc_dv, 16); CHECK_EQ(s.gen.amp_dv, 20);
+    s.gen.dc_dv = 31;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_UP)), 0);
+    state_defaults(&s); s.ctl = CTL_GEN;
+    control_handle(&s, K(KEV_SHORT, KEY_UP));
+    CHECK_EQ(s.gen.amp_dv, 21);
 }
