@@ -367,9 +367,9 @@ directly: unipolar, about 0 … 3.1 V (code 548…3548 measured as 0.44…2.72 V
 - Waveforms: sine, square (duty 1–99 %), triangle, sawtooth (rising), DC, half-wave rectified sine,
   full-wave rectified sine, exponential rise, exponential fall. (Stock step, anti-step, multi-tone, sinc and
   Lorentz are out of scope.)
-- Frequency 1 Hz … 50 kHz. A table of n points (n ≤ 400) holds m whole periods, with at least 20 points per period, played at TMR6's update rate (≤ 1 MS/s): f = 240 MHz × m / (timer divider × n). The planner prefers one period and the longest table and adds periods only when needed for accuracy. For a requested frequency the planner picks N and the timer divider (prescaler ×
-  reload at 240 MHz) that minimise the frequency error; the error must be ≤ 0.1 % over the whole range and
-  the UI shows the actual frequency.
+- Frequency 1 Hz … 50 kHz. A table of n points (n ≤ 400) holds m whole periods, with at least 20 points per period, played at TMR6's update rate (≤ 1 MS/s): f = 240 MHz × m / (timer divider × n). The planner prefers one period and the longest table and adds periods only when needed for accuracy. For a requested frequency the planner picks n, m and the timer divider (prescaler ×
+  reload at 240 MHz) that minimise the frequency error; the error is at most 0.1 % for every settable
+  frequency (three significant digits), and the UI shows the actual frequency.
 - Amplitude 0.1 … 3.0 Vpp in 0.1 V steps; offset = centre voltage in 0.1 V steps, clamped so the waveform
   stays within 0 … 3.1 V (for DC the offset is the level, 0 … 3.1 V). Volts → DAC code uses 3.1 V full scale
   (4095); accuracy ±5 % until checked with a meter.

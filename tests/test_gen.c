@@ -72,6 +72,31 @@ void test_gen(void) {
     p = gen_plan(49500);                               /* needs several periods per table */
     CHECK(p.m > 1);
 
+    /* square wave keeps every pulse: m rising edges (circular) in the table for any duty */
+    {
+        static const int duties[] = {1, 2, 30, 50, 70, 98, 99};
+        gen_cfg_t sg;
+        gen_defaults(&sg); sg.wave = GEN_SQUARE;
+        int bad = 0;
+        for (uint32_t f = 1; f <= 50000 && !bad; f++) {
+            uint32_t dec = 1;
+            while (dec * 10u <= f) dec *= 10u;
+            if (dec >= 100u && f % (dec / 100u)) continue;
+            gen_plan_t sp = gen_plan(f);
+            for (unsigned di = 0; di < sizeof duties / sizeof duties[0]; di++) {
+                sg.duty_pct = (uint8_t)duties[di];
+                gen_table(&sg, &sp, tab);
+                int hi_c = tab[0], edges = 0;
+                for (int i = 0; i < sp.n; i++) if (tab[i] > hi_c) hi_c = tab[i];
+                for (int i = 0; i < sp.n; i++) {
+                    int prev = tab[i == 0 ? sp.n - 1 : i - 1];
+                    if (prev != hi_c && tab[i] == hi_c) edges++;
+                }
+                if (edges != sp.m) { CHECK_EQ(edges, sp.m); bad = 1; break; }
+            }
+        }
+    }
+
     /* tables: 2.0 Vpp around 1.5 V -> 500..2500 mV */
     gen_defaults(&g);
     int lo = gen_code_mv(500), hi = gen_code_mv(2500), mid = gen_code_mv(1500);
@@ -110,7 +135,26 @@ void test_gen(void) {
     /* full scale: 3.0 Vpp around 1.5 V never leaves 0..4095 */
     gen_defaults(&g); g.amp_dv = 30; g.offset_dv = 15; gen_clamp(&g);
     gen_table(&g, &q, tab);
-    for (int i = 0; i < 100; i++) if (tab[i] > 4095) { CHECK(0); break; }
+    mn = 4095; mx = 0;
+    for (int i = 0; i < 100; i++) { if (tab[i] < mn) mn = tab[i]; if (tab[i] > mx) mx = tab[i]; }
+    CHECK(near(mn, gen_code_mv(0), 2)); CHECK(near(mx, gen_code_mv(3000), 2));
+
+    /* several periods, n not divisible by m: exactly m mid crossings, extremes close to lo/hi */
+    gen_defaults(&g);
+    gen_plan_t q3 = {101, 5, 0, 0, 0};
+    gen_table(&g, &q3, tab);
+    {
+        int cross = 0;
+        mn = 4095; mx = 0;
+        for (int i = 0; i < 101; i++) {
+            int prev = tab[i == 0 ? 100 : i - 1];
+            if (prev < mid && tab[i] >= mid) cross++;
+            if (tab[i] < mn) mn = tab[i];
+            if (tab[i] > mx) mx = tab[i];
+        }
+        CHECK_EQ(cross, 5);
+        CHECK(near(mn, lo, 12)); CHECK(near(mx, hi, 12));
+    }
 
     CHECK_STR(gen_wave_name(GEN_SINE), "Sine"); CHECK_STR(gen_wave_name(GEN_EXP_FALL), "Exp fall");
     CHECK_STR(gen_wave_name(99), "?");

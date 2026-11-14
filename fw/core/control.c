@@ -15,9 +15,10 @@ static uint32_t gen_key(scope_state_t *s, int k, int t, int tap) {
     if (k == KEY_MODE && (t == KEV_SHORT || t == KEV_LONG)) { s->gen_open = 0; return CHG_SCREEN; }
     if (k == KEY_UP && tap) { s->gen_item = (uint8_t)((s->gen_item + GEN_ROWS - 1) % GEN_ROWS); return CHG_GENPAGE; }
     if (k == KEY_DOWN && tap) { s->gen_item = (uint8_t)((s->gen_item + 1) % GEN_ROWS); return CHG_GENPAGE; }
-    if (k == KEY_WHEEL_PRESS && t == KEV_SHORT && s->gen_item == 2) { g->fine ^= 1; return CHG_GENPAGE; }
+    if (k == KEY_WHEEL_PRESS && t == KEV_SHORT && s->gen_item == 2) { g->fine ^= 1; return CHG_GENPAGE | CHG_BARS; }
     if ((k == KEY_WHEEL_L || k == KEY_WHEEL_R) && tap) {
         int d = k == KEY_WHEEL_R ? 1 : -1;
+        gen_cfg_t old = *g;
         switch (s->gen_item) {
         case 0: g->on ^= 1; break;
         case 1: g->wave = (uint8_t)((g->wave + GEN_NUM_WAVES + d) % GEN_NUM_WAVES); break;
@@ -27,6 +28,8 @@ static uint32_t gen_key(scope_state_t *s, int k, int t, int tap) {
         default: g->duty_pct = (uint8_t)clampi(g->duty_pct + d, 1, 99); break;
         }
         gen_clamp(g);
+        if (g->on == old.on && g->wave == old.wave && g->fine == old.fine && g->duty_pct == old.duty_pct &&
+            g->amp_dv == old.amp_dv && g->offset_dv == old.offset_dv && g->freq_hz == old.freq_hz) return 0;
         return CHG_GEN | CHG_GENPAGE | CHG_BARS;
     }
     return 0;

@@ -62,6 +62,24 @@ static char *fmt_dv(char *b, int dv) {
     return b;
 }
 
+/* millihertz -> "999.001Hz" / "1000.00Hz" / "49868.8Hz" (truncated), padded with spaces to width w */
+static char *fmt_hz_mhz(char *b, uint32_t mhz, int w) {
+    uint32_t hz = mhz / 1000u, fr = mhz % 1000u;
+    int dec = hz < 1000u ? 3 : hz < 10000u ? 2 : 1;
+    char t[12];
+    int k = 0;
+    const char *p = fmt_u(t, hz, 1);
+    while (*p) b[k++] = *p++;
+    b[k++] = '.';
+    if (dec == 2) fr /= 10u; else if (dec == 1) fr /= 100u;
+    p = fmt_u(t, fr, dec);
+    for (; *p; p++) b[k++] = *p == ' ' ? '0' : *p;
+    b[k++] = 'H'; b[k++] = 'z';
+    while (k < w) b[k++] = ' ';
+    b[k] = 0;
+    return b;
+}
+
 void ui_draw_gen(const scope_state_t *s, uint32_t actual_mhz) {
     static const char *labels[GEN_ROWS] = {"Output", "Waveform", "Frequency", "Amplitude", "Offset", "Duty"};
     const gen_cfg_t *g = &s->gen;
@@ -93,8 +111,8 @@ void ui_draw_gen(const scope_state_t *s, uint32_t actual_mhz) {
     lcd_text(7, 11, "actual ", C_GRAY, C_NAVY);
     if (g->wave == GEN_DC) lcd_text(14, 11, "DC level     ", C_WHITE, C_NAVY);
     else {
-        int c = lcd_text(14, 11, fmt_si(b, (float)actual_mhz * 1e-3f, "Hz", 0), C_WHITE, C_NAVY);
-        lcd_text(c, 11, "      ", C_WHITE, C_NAVY);
+        char a[24];
+        lcd_text(14, 11, fmt_hz_mhz(a, actual_mhz, 14), C_WHITE, C_NAVY);   /* cols 14..27 */
     }
     lcd_text(7, 12, "press wheel on Freq: fine", C_GRAY, C_NAVY);
 }

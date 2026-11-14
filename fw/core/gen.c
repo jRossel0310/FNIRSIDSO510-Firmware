@@ -103,11 +103,16 @@ void gen_table(const gen_cfg_t *g, const gen_plan_t *p, uint16_t *out) {
     int32_t hi_mv = (int32_t)g->offset_dv * 100 + (int32_t)g->amp_dv * 50;
     const float e5 = 0.006737947f;                      /* e^-5 */
     uint32_t n = p->n, m = p->m ? p->m : 1u;
+    /* square: high while r*100 < duty*n, clamped so every period keeps at least one high and one low sample */
+    uint32_t th = (uint32_t)g->duty_pct * n;
+    if (th < 100u * m) th = 100u * m;
+    if (th > 100u * (n - m)) th = 100u * (n - m);
     for (uint32_t i = 0; i < n; i++) {
-        float x = (float)((i * m) % n) / (float)n;      /* phase within the period, 0..1 */
+        uint32_t r = (i * m) % n;                       /* phase numerator: x = r / n */
+        float x = (float)r / (float)n;                  /* phase within the period, 0..1 */
         float s;                                        /* shape, 0..1 */
         switch (g->wave) {
-        case GEN_SQUARE:   s = x * 100.0f < (float)g->duty_pct ? 1.0f : 0.0f; break;
+        case GEN_SQUARE:   s = r * 100u < th ? 1.0f : 0.0f; break;
         case GEN_TRIANGLE: s = x < 0.5f ? 2.0f * x : 2.0f - 2.0f * x; break;
         case GEN_SAW:      s = x; break;
         case GEN_DC:       s = 0.5f; break;

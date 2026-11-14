@@ -65,8 +65,8 @@ static gen_plan_t gen_pl;
 /* Push the generator settings to the hardware. */
 static void gen_apply(void) {
     gen_clamp(&st.gen);
-    if (!st.gen.on) { gendac_off(); return; }
     gen_pl = gen_plan(st.gen.wave == GEN_DC ? 1000u : st.gen.freq_hz);
+    if (!st.gen.on) { gendac_off(); return; }
     gendac_hold();                        /* DMA must not read the table while it is rewritten */
     gen_table(&st.gen, &gen_pl, gen_tab);
     gendac_load(gen_tab, gen_pl.n, gen_pl.psc, gen_pl.arr);
@@ -332,6 +332,7 @@ static void do_autozero(void) {
 }
 
 static void power_down(void) {
+    gendac_off();                /* no signal on the BNC while the scope is off */
     adc_abort();                 /* stop the logger ring DMA before power-off */
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);

@@ -124,7 +124,7 @@ void test_control_gen(void) {
     control_handle(&s, K(KEV_SHORT, KEY_DOWN));                       /* row 2: frequency */
     control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R));
     CHECK_EQ(s.gen.freq_hz, 2000);
-    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), CHG_GENPAGE);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), CHG_GENPAGE | CHG_BARS);
     CHECK_EQ(s.gen.fine, 1);
     control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R));
     CHECK_EQ(s.gen.freq_hz, 2010);
@@ -160,4 +160,15 @@ void test_control_gen(void) {
     /* wheel press on a normal menu item still closes the menu */
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), CHG_SCREEN);
     CHECK_EQ(s.menu_open, 0); CHECK_EQ(s.gen_open, 0);
+
+    /* no-op wheel edits report no change */
+    state_defaults(&s); s.gen_open = 1; s.gen_item = 5; s.gen.duty_pct = 1;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_L)), 0);
+    CHECK_EQ(s.gen.duty_pct, 1);
+    state_defaults(&s); s.gen_open = 1; s.gen_item = 2; s.gen.freq_hz = 50000;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), 0);
+    CHECK_EQ(s.gen.freq_hz, 50000);
+    state_defaults(&s); s.gen_open = 1; s.gen_item = 5;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_GEN | CHG_GENPAGE | CHG_BARS);
+    CHECK_EQ(s.gen.duty_pct, 51);
 }
