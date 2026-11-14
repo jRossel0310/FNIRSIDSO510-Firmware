@@ -256,3 +256,5 @@ Scope app, probe on the generator output (50 kHz, 3.0 Vpp), checked over USB fra
 - Top bar: `G` marker now col 29, `USB` cols 31..33, uncalibrated mark is a red `!` at col 35 (user: "looks better").
 - Parked for sub-project 5: trace stretch / trigger jitter at 50 ns/div; auto-set measures frequency only at
   12 MS/s; baseline settle at the 10/5 us/div calibration boundary.
+- User checks (reported "all three have passed"): CSV save at 2 us/div, auto-zero with the fast calibration set
+  ("ZERO done"), frequency reading with 50 kHz at 5 us/div.
