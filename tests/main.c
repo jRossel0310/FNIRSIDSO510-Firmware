@@ -19,6 +19,7 @@ void test_msc(void);
 void test_usb_std(void);
 void test_bytefifo(void);
 void test_stream_proto(void);
+void test_logger(void);
 
 int main(void) {
     test_fmt();
@@ -39,6 +40,7 @@ int main(void) {
     test_usb_std();
     test_bytefifo();
     test_stream_proto();
+    test_logger();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }
