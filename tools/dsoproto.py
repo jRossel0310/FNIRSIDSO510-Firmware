@@ -88,8 +88,10 @@ def parse(ptype, p):
     if ptype == FRAME:
         (rate, vdiv, dc, x10, mode, edge, trig, zero, level, tidx, pwm) = struct.unpack_from("<IHBBBBBhhiH", p, 0)
         (n,) = struct.unpack_from("<H", p, 21)
+        if len(p) != 23 + n:
+            raise ValueError("frame payload length %d does not match n=%d" % (len(p), n))
         m = Meta(rate, vdiv, dc, x10, zero, pwm, mode, edge, trig, level, tidx)
-        return Frame(m, bytes(p[23:23 + n]))
+        return Frame(m, bytes(p[23:]))
     if ptype == LOGMETA:
         (rate, vdiv, x10, dc, zero, pwm) = struct.unpack_from("<IHBBhH", p, 0)
         return LogMeta(Meta(rate, vdiv, dc, x10, zero, pwm))
@@ -111,6 +113,7 @@ class Decoder:
     def __init__(self):
         self.buf = bytearray()
         self.bad_crc = 0
+        self.bad_payload = 0
 
     def feed(self, data):
         self.buf += data
@@ -127,6 +130,9 @@ class Decoder:
                 return out
             ptype = self.buf[2]
             n = self.buf[3] | self.buf[4] << 8
+            if not INFO <= ptype <= ERR:
+                del self.buf[:1]                    # false sync: not a packet type, skip one byte
+                continue
             if len(self.buf) < 5 + n + 2:
                 return out
             body = bytes(self.buf[2:5 + n])
@@ -135,8 +141,12 @@ class Decoder:
                 self.bad_crc += 1
                 del self.buf[:1]                    # skip this sync, look for the next one
                 continue
-            pk = parse(ptype, body[3:])
-            del self.buf[:7 + n]
+            del self.buf[:7 + n]                    # consume the packet before parsing it
+            try:
+                pk = parse(ptype, body[3:])
+            except (struct.error, IndexError, ValueError):
+                self.bad_payload += 1               # CRC-valid but malformed payload: skip it
+                continue
             if pk is not None:
                 out.append(pk)
 
@@ -204,7 +214,10 @@ class LogCsvWriter:
         self.m = m
 
     def drop(self, d):
+        if self.m is None:
+            return                                  # no header written yet: nothing to attach the gap to
         self.f.write("# gap=%d samples at %d\n" % (d.count, d.first_index - d.count))
+        self.next_index = d.first_index
 
     def log(self, lg):
         if self.m is None:

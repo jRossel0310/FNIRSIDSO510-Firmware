@@ -1,5 +1,6 @@
 import io
 import os
+import struct
 import sys
 import unittest
 
@@ -83,7 +84,46 @@ class TestStream(unittest.TestCase):
         self.expect(pk)
 
 
+def pkt(ptype, payload):
+    """Build a CRC-valid packet on the wire."""
+    body = bytes([ptype]) + struct.pack("<H", len(payload)) + payload
+    return dp.SYNC + body + struct.pack("<H", dp.crc16(body))
+
+
+FRAME_HDR = struct.pack("<IHBBBBBhhiH", 600000, 500, 1, 0, 0, 0, 0, 46, 75, 3, 1630)
+
+
+class TestFaults(unittest.TestCase):
+    def test_short_frame_payload_is_skipped(self):
+        d = dp.Decoder()
+        pk = d.feed(pkt(dp.FRAME, bytes(10)) + pkt(dp.OK, b"OK"))
+        self.assertEqual([type(p).__name__ for p in pk], ["Ok"])
+        self.assertEqual(d.bad_payload, 1)
+
+    def test_frame_n_larger_than_samples_is_skipped(self):
+        d = dp.Decoder()
+        bad = pkt(dp.FRAME, FRAME_HDR + struct.pack("<H", 10) + bytes(4))   # n=10, only 4 sample bytes
+        pk = d.feed(bad + pkt(dp.OK, b"OK"))
+        self.assertEqual([type(p).__name__ for p in pk], ["Ok"])
+        self.assertEqual(d.bad_payload, 1)
+
+    def test_false_sync_is_skipped_without_bad_crc(self):
+        d = dp.Decoder()
+        junk = b"\x11\xa5\x5a\x09\x03\x00"                  # sync followed by unknown type 9
+        pk = d.feed(junk + pkt(dp.OK, b"OK"))
+        self.assertEqual([type(p).__name__ for p in pk], ["Ok"])
+        self.assertEqual(d.bad_crc, 0)
+
+
 class TestCsv(unittest.TestCase):
+    def test_drop_before_meta_writes_nothing(self):
+        out = io.StringIO()
+        w = dp.LogCsvWriter(out, "0.3.0")
+        w.drop(dp.Drop(5, 3))
+        self.assertEqual(out.getvalue(), "")
+        w.meta(dp.Meta(rate_hz=1000, vdiv_mv=1000, coupling_dc=1, probe_x10=0, zero_code=128, offset_pwm=2033))
+        self.assertTrue(out.getvalue().startswith("# DSO-510 custom firmware 0.3.0 (PC log)\n"))
+
     def test_frame_csv_matches_firmware(self):
         p = dp.Decoder().feed(vec("frame.bin"))[0]
         text = dp.frame_csv_text(p.meta, p.samples, "0.3.0")
