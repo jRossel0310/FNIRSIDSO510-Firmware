@@ -527,5 +527,5 @@ setting.
   menu rows; settings v1 and v2; averaging.
 - Device: generator square 1 kHz 30 % duty, 2.0 Vpp around 1.5 V: frequency 1 kHz, period 1 ms, duty 30 / 70 %,
   widths 300 / 700 us, max about 2.5 V, min about 0.5 V, Vpp and amplitude about 2.0 V, average about 1.1 V, RMS
-  about 1.46 V (the scope reads about 6 % low). Slots survive a power cycle. Auto off at 5 minutes switches off
+  about 1.43 V (the scope reads about 6 % low). Slots survive a power cycle. Auto off at 5 minutes switches off
   and is postponed while the PC streams.
