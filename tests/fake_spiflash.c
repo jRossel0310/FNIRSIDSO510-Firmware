@@ -5,11 +5,15 @@
 #define FAKE_SIZE (8u * 1024 * 1024)
 static uint8_t mem[FAKE_SIZE];
 static int refused, fail;
+static uint32_t erases[FAKE_SIZE / FLASH_SECTOR], erase_total;
 
 uint8_t *fake_flash_mem(void) { return mem; }
 void fake_flash_reset(uint8_t fill) { memset(mem, fill, sizeof mem); refused = 0; fail = 0; }
 int fake_flash_refused(void) { return refused; }
 void fake_flash_fail_writes(int on) { fail = on; }
+void fake_flash_erase_reset(void) { memset(erases, 0, sizeof erases); erase_total = 0; }
+uint32_t fake_flash_erases(uint32_t addr) { return addr < FAKE_SIZE ? erases[addr / FLASH_SECTOR] : 0; }
+uint32_t fake_flash_erase_total(void) { return erase_total; }
 
 void spiflash_init(void) { }
 uint32_t spiflash_jedec_id(void) { return 0x856017u; }
@@ -23,6 +27,7 @@ int spiflash_read(uint32_t addr, uint8_t *buf, uint32_t n) {
 int spiflash_erase_sector(uint32_t addr) {
     if ((addr & (FLASH_SECTOR - 1)) || !flashmap_writable(addr, FLASH_SECTOR)) { refused++; return -2; }
     if (fail) return -1;
+    erases[addr / FLASH_SECTOR]++; erase_total++;
     memset(mem + addr, 0xFF, FLASH_SECTOR);
     return 0;
 }

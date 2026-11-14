@@ -61,6 +61,11 @@ void test_capsave(void) {
     if (got) CHECK_STR(got, exp);
     got = read_file("/CSV/CAP0001.CSV", &len);
     CHECK(got != 0 && len > 4800 * 20);                         /* ~25 bytes per row */
+    static char big[200000];                                    /* 4096-byte chunks with carry-over: exact text */
+    k = csv_header(big, sizeof big, &m);
+    for (int i = 0; i < 4800; i++) k += csv_row(big + k, &m, i, rec[i]);
+    big[k] = 0;
+    if (got) { CHECK_EQ(len, k); CHECK(strcmp(got, big) == 0); }
     got = read_file("/KEEP.TXT", &len);
     CHECK(got != 0 && len == 5);                                /* other files untouched */
 
@@ -85,6 +90,28 @@ void test_capsave(void) {
     f_mount(0, "", 0);
 
     CHECK_EQ(fake_flash_refused(), 0);                          /* no write ever hit the guard */
+
+    /* flash wear of one 4800-sample save: each FAT sector <= 3 erases, <= 45 erases in total */
+    format();
+    for (int i = 0; i < 4800; i++) rec[i] = (uint8_t)(i * 13);
+    fake_flash_erase_reset();
+    CHECK_EQ(capsave_write(rec, 4800, &m, &num), CAP_OK);
+    f_mount(&fs, "", 1);
+    uint32_t fat_max = 0, all_max = 0;
+    for (uint32_t s = 0; s < (uint32_t)fs.fsize * fs.n_fats; s++) {
+        uint32_t e = fake_flash_erases(USER_VOL_BASE + (uint32_t)(fs.fatbase + s) * FLASH_SECTOR);
+        if (e > fat_max) fat_max = e;
+    }
+    uint32_t all_at = 0;
+    for (uint32_t a = USER_VOL_BASE; a < USER_VOL_BASE + USER_VOL_BYTES; a += FLASH_SECTOR)
+        if (fake_flash_erases(a) > all_max) { all_max = fake_flash_erases(a); all_at = a / FLASH_SECTOR; }
+    f_mount(0, "", 0);
+    printf("capsave wear: %u erases total, FAT sector max %u, any sector max %u (lba %u; fat %u+%u*%u, dirbase %u, database %u)\n",
+           (unsigned)fake_flash_erase_total(), (unsigned)fat_max, (unsigned)all_max, (unsigned)all_at,
+           (unsigned)fs.fatbase, (unsigned)fs.n_fats, (unsigned)fs.fsize, (unsigned)fs.dirbase, (unsigned)fs.database);
+    CHECK(fat_max >= 1 && fat_max <= 3);
+    CHECK(all_max <= 4);                                        /* the new /CSV directory sector: mkdir, create, close */
+    CHECK(fake_flash_erase_total() <= 45);
 
     /* I/O error */
     format();

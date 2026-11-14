@@ -5,7 +5,8 @@ static FATFS fs;
 static FIL fil;
 static DIR dir;
 static FILINFO fno;
-static char buf[4096];
+#define CHUNK 4096                                      /* = sector size: whole-sector f_writes bypass the window */
+static char buf[CHUNK + CSV_ROW_MAX];
 
 static int highest_number(void) {
     int hi = 0;
@@ -37,11 +38,15 @@ cap_res_t capsave_write(const uint8_t *rec, int n, const csv_meta_t *m, int *num
     *num_out = num;
     capname_make(path + sizeof CAP_DIR, num);           /* after "/CSV/" */
     if (f_open(&fil, path, FA_WRITE | FA_CREATE_NEW) != FR_OK) goto out;
-    int k = csv_header(buf, sizeof buf, m);
+    int k = csv_header(buf, CHUNK, m);
     res = k < 0 ? CAP_ERR : CAP_OK;
     for (int i = 0; i < n && res == CAP_OK; i++) {
-        k += csv_row(buf + k, m, i, rec[i]);
-        if (k > (int)sizeof buf - CSV_ROW_MAX) { res = put(buf, (UINT)k); k = 0; }
+        k += csv_row(buf + k, m, i, rec[i]);             /* k < CHUNK before, so k < CHUNK + CSV_ROW_MAX after */
+        if (k >= CHUNK) {                                /* exactly CHUNK bytes out, carry the overflow over */
+            res = put(buf, CHUNK);
+            k -= CHUNK;
+            for (int j = 0; j < k; j++) buf[j] = buf[CHUNK + j];
+        }
     }
     if (res == CAP_OK && k) res = put(buf, (UINT)k);
     if (f_close(&fil) != FR_OK && res == CAP_OK) res = CAP_ERR;
