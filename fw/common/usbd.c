@@ -51,6 +51,8 @@ static void ep_clr_ctr_rx(int n) { USB_EPR(n) = (USB_EPR(n) & EP_MASK & ~EP_CTR_
 static void ep_clr_ctr_tx(int n) { USB_EPR(n) = (USB_EPR(n) & EP_MASK & ~EP_CTR_TX) | EP_CTR_RX; }
 static void ep_clr_dtog(int n) { uint32_t v = USB_EPR(n); USB_EPR(n) = (v & EP_MASK) | (v & 0x4040u) | 0x8080u; }
 
+static void ep_clr_dtog_bits(int n, uint32_t m) { uint32_t v = USB_EPR(n); USB_EPR(n) = (v & EP_MASK) | (v & m) | 0x8080u; }
+
 static void pma_write(uint32_t off, const uint8_t *b, int n) {
     for (int i = 0; i < n; i += 2) PMA(off + (uint32_t)i) = b[i] | (uint32_t)(i + 1 < n ? b[i + 1] : 0) << 8;
 }
@@ -92,8 +94,24 @@ static void ep0_setup(void) {
     usb_resp_t r;
     pma_read(EP0_RX, s, 8);
     ep_clr_ctr_rx(0);
+    ctl_left = 0; ctl_zlp = 0;                          /* a new SETUP aborts any earlier IN transfer */
     usb_std_setup(&dev, s, &r);
-    if (r.bot_reset) msc_reset(msc);
+    if (r.bot_reset) {
+        msc_reset(msc);
+        rx_held = 0; tx_busy = 0;
+        ep_set_tx(1, ST_NAK); ep_set_rx(1, ST_VALID);
+    }
+    if (r.clear_halt_ep == 0x81) {                      /* host resets its IN toggle to DATA0 */
+        ep_clr_dtog_bits(1, 0x0040u); ep_set_tx(1, ST_NAK); tx_busy = 0;
+    } else if (r.clear_halt_ep == 0x01) {               /* host resets its OUT toggle to DATA0 */
+        ep_clr_dtog_bits(1, 0x4000u); ep_set_rx(1, ST_VALID);
+    }
+    if (r.configured_changed) {
+        ep_clr_dtog_bits(1, 0x4040u);
+        ep_set_rx(1, ST_VALID); ep_set_tx(1, ST_NAK);
+        tx_busy = rx_held = 0;
+        msc_reset(msc);
+    }
     if (r.set_address) { pending_addr = 1; addr = r.new_address; }
     switch (r.act) {
     case USB_DATA_IN: {
@@ -130,7 +148,7 @@ static void service_ctr(void) {
         } else if (ep == 1) {
             if (v & EP_CTR_RX) {                        /* hardware NAKs further OUT packets now */
                 ep_clr_ctr_rx(1);
-                rx_len = (uint8_t)rx_count(1);
+                rx_len = (uint8_t)(rx_count(1) > 64 ? 64 : rx_count(1));
                 pma_read(EP1_RX, rxbuf, rx_len);
                 rx_held = 1;
             }
