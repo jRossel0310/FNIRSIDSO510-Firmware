@@ -18,6 +18,9 @@ typedef struct { uint16_t psc, arr; uint32_t rate_hz; } rate_cfg_t;
 
 /* Sample rate for a timebase: 120 samples/div, capped at 12 MS/s. */
 rate_cfg_t units_rate_for_tdiv(uint32_t tdiv_ns);
+/* Exact timer setting for a sample rate: TIMER_CLK_HZ / ((psc+1)(arr+1)) == hz.
+   rate_hz = 0 if hz is 0 or no exact setting exists. */
+rate_cfg_t units_rate_for_hz(uint32_t hz);
 /* Samples covering the 10-division screen. */
 uint32_t units_samples_per_screen(uint32_t rate_hz, uint32_t tdiv_ns);
 float units_volts_per_code(int vdiv_idx, int probe_x10);

@@ -189,3 +189,17 @@ Other:
 - `fsck.vfat -n`: clean apart from the dirty bit (expected after unplugging while mounted / soft-disconnect).
 - File timestamps are the fixed FatFs date 2026-11-13 00:00 (no RTC); hosts show it shifted by their time zone.
 - Not run (user's choice): stock-firmware compatibility check and Windows.
+
+## Hardware checks for sub-project 4 (2026-11-13)
+
+- Composite device enumerates on Linux first try: `usb-storage` (drive) + `cdc_acm` (`/dev/ttyACM0`), bcdDevice 3.00.
+- Serial port access: udev rule `/etc/udev/rules.d/70-dso510.rules` (uaccess + `ID_MM_DEVICE_IGNORE`). With CDC protocol
+  0x01 ModemManager probed the port (second reader -> garbled stream); protocol 0x00 + the rule fixed it.
+- CDC IN throughput (cdctest BENCH): 863 kB/s, 0 CRC errors, 0 sequence gaps over 4.3 MB.
+- Frames mode: 13–50 frames/s (4800 samples each, depends on timebase), 0 bad CRC.
+- Logger mode after the incremental-push fix: 10k / 100k / 200k / 500k S/s all gap-free over 8 s each
+  (0 lost, continuous sample index, 0 bad CRC; 500k delivers 496 kS/s). Before the fix ≥ 100 kS/s lost 12.5 %
+  (whole ring half pushed into the 8 KiB TX FIFO at once).
+- OK/ERR replies arrive even mid-log at 500 kS/s.
+- `tools/scope_live.py` (venv `~/.venvs/dso`): user checked the live window ("looks good for now").
+- Not run: long (minutes) logger soak, replug/save-during-stream robustness steps, Windows/macOS.

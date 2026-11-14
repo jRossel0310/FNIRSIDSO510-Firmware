@@ -43,3 +43,16 @@ uint32_t fe_settle_ms(int dcodes) {
     while ((1u << l2) < 2 * d) l2++;
     return 40u + 243u * (uint32_t)l2;           /* 350 ms * ln 2 = 243 ms per doubling */
 }
+
+rate_cfg_t units_rate_for_hz(uint32_t hz) {
+    rate_cfg_t r = {0, 0, 0};
+    if (hz == 0 || TIMER_CLK_HZ % hz) return r;
+    uint32_t div = TIMER_CLK_HZ / hz;
+    for (uint32_t p = 1; p <= 65536u; p++) {
+        if (div % p == 0 && div / p <= 65536u) {
+            r.psc = (uint16_t)(p - 1u); r.arr = (uint16_t)(div / p - 1u); r.rate_hz = hz;
+            return r;
+        }
+    }
+    return r;
+}

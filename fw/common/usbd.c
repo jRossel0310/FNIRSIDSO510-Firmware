@@ -1,6 +1,7 @@
 #include "usbd.h"
 #include "usb_std.h"
 #include "board.h"
+#include "bytefifo.h"
 
 #define USB_BASE   0x40005C00u
 #define USB_EPR(n) REG32(USB_BASE + 4u * (n))
@@ -29,18 +30,28 @@
 #define ST_NAK   2u
 #define ST_VALID 3u
 
-/* PMA layout (byte offsets): BTABLE 0x00, EP0 RX 0x40, EP0 TX 0x80, EP1 RX 0xC0, EP1 TX 0x100 */
+/* PMA layout (byte offsets): BTABLE 0x00, EP0 RX 0x40, EP0 TX 0x80, EP1 RX 0xC0, EP1 TX 0x100,
+   EP2 RX 0x140, EP2 TX 0x180, EP3 TX 0x1C0 (BTABLE entries at 0, 8, 16, 24) */
 #define EP0_RX 0x40u
 #define EP0_TX 0x80u
 #define EP1_RX 0xC0u
 #define EP1_TX 0x100u
+#define EP2_RX 0x140u
+#define EP2_TX 0x180u
+#define EP3_TX 0x1C0u
+#define EP_INTERRUPT 0x0600u
+#define CDC_TX_SIZE 8192u
+#define CDC_RX_SIZE 256u
 #define RX64   0x8400u                          /* COUNT_RX: BL_SIZE=1, NUM_BLOCK=1 -> 64 bytes */
 
 #define CNTR_IRQS  0x9E00u                         /* CTRM WKUPM SUSPM RESETM SOFM */
 #define USB_IRQ_BIT (1u << 20)                      /* IRQ20: USBFS low priority, NVIC ISER0/ICER0 */
 
 /* Everything below except `busy`, `lock_depth`, `irq_on` and `detached` is owned by the ISR; main
-   context touches it only with the USB IRQ masked (usb_lock) or while the IRQ is off (detached). */
+   context touches it only with the USB IRQ masked (usb_lock) or while the IRQ is off (detached).
+   The CDC state is ISR-owned like EP1, except the FIFOs: cdc_tx is produced by main and consumed by
+   the ISR (ep2_pump, bf_clear); cdc_rx is produced by the ISR and consumed by main (never cleared
+   from the ISR, main owns its tail). */
 static msc_t *msc;
 static usb_dev_t dev;
 static uint8_t inited, busy, tx_busy, rx_held, rx_len, pending_addr, addr;
@@ -51,6 +62,11 @@ static const uint8_t *ctl_ptr;
 static uint16_t ctl_left;
 static uint8_t ctl_zlp;
 static volatile uint32_t last_sof;
+static uint8_t cdc_tx_mem[CDC_TX_SIZE], cdc_rx_mem[CDC_RX_SIZE];
+static bytefifo_t cdc_tx, cdc_rx;
+static uint8_t tx2_busy, tx2_zlp, rx2_held, rx2_len, cdc_dtr;
+static uint8_t rx2buf[64], tx2buf[64];
+static uint8_t ctl_out_left;                  /* EP0 OUT data stage bytes still expected */
 
 /* Mask the USB IRQ (main context only; nests). The ISR never takes it. */
 static void usb_lock(void) {
@@ -83,19 +99,31 @@ static void pma_read(uint32_t off, uint8_t *b, int n) {
 }
 static int rx_count(int ep) { return (int)(PMA((uint32_t)ep * 8u + 6u) & 0x3FFu); }
 
+static void cdc_reset_state(void) {
+    tx2_busy = tx2_zlp = rx2_held = 0; cdc_dtr = 0; ctl_out_left = 0;
+    bf_clear(&cdc_tx);                 /* consumer op: the ISR side owns cdc_tx.tail */
+}
+
 static void bus_reset(void) {
     USB_BTABLE = 0;
     PMA(0) = EP0_TX; PMA(2) = 0; PMA(4) = EP0_RX; PMA(6) = RX64;
     PMA(8) = EP1_TX; PMA(10) = 0; PMA(12) = EP1_RX; PMA(14) = RX64;
+    PMA(16) = EP2_TX; PMA(18) = 0; PMA(20) = EP2_RX; PMA(22) = RX64;
+    PMA(24) = EP3_TX; PMA(26) = 0; PMA(28) = 0; PMA(30) = 0;
     USB_EPR(0) = EP_CONTROL | 0u;
     ep_clr_dtog(0); ep_set_rx(0, ST_VALID); ep_set_tx(0, ST_NAK);
     USB_EPR(1) = 0x0000u | 1u;                          /* bulk, address 1 */
     ep_clr_dtog(1); ep_set_rx(1, ST_VALID); ep_set_tx(1, ST_NAK);
+    USB_EPR(2) = 0x0000u | 2u;                          /* bulk, address 2 (CDC data) */
+    ep_clr_dtog(2); ep_set_rx(2, ST_VALID); ep_set_tx(2, ST_NAK);
+    USB_EPR(3) = EP_INTERRUPT | 3u;                     /* interrupt IN, address 3 (CDC notify, unused) */
+    ep_clr_dtog(3); ep_set_tx(3, ST_NAK);
     USB_DADDR = 0x80u;                                  /* enable, address 0 */
     usb_std_init(&dev);
     msc_reset(msc);
     tx_busy = rx_held = pending_addr = ctl_left = ctl_zlp = 0;
     suspended = 0;
+    cdc_reset_state();
 }
 
 /* EP1 packet movement: offer a held OUT packet to msc (stays NAKed while msc says -1), then start
@@ -106,6 +134,22 @@ static void ep1_pump(void) {
     if (!tx_busy) {
         int n = msc_tx(msc, txbuf);
         if (n >= 0) { pma_write(EP1_TX, txbuf, n); PMA(10) = (uint32_t)n; ep_set_tx(1, ST_VALID); tx_busy = 1; }
+    }
+}
+
+/* EP2 packet movement (CDC data): offer a held OUT packet to the RX FIFO, then start the next IN
+   packet if the endpoint is free. ISR context, or main context with the IRQ masked. */
+static void ep2_pump(void) {
+    if (detached || !dev.config) return;
+    if (rx2_held && bf_space(&cdc_rx) >= rx2_len) {
+        bf_write(&cdc_rx, rx2buf, rx2_len); rx2_held = 0; ep_set_rx(2, ST_VALID);
+    }
+    if (!tx2_busy && cdc_dtr && bf_used(&cdc_tx)) {
+        uint32_t n = bf_read(&cdc_tx, tx2buf, 64);
+        pma_write(EP2_TX, tx2buf, (int)n); PMA(18) = n; ep_set_tx(2, ST_VALID); tx2_busy = 1;
+        tx2_zlp = (n == 64 && !bf_used(&cdc_tx));       /* end a full-packet burst with a ZLP */
+    } else if (!tx2_busy && cdc_dtr && tx2_zlp) {
+        tx2_zlp = 0; PMA(18) = 0; ep_set_tx(2, ST_VALID); tx2_busy = 1;
     }
 }
 
@@ -123,7 +167,7 @@ static void ep0_setup(void) {
     usb_resp_t r;
     pma_read(EP0_RX, s, 8);
     ep_clr_ctr_rx(0);
-    ctl_left = 0; ctl_zlp = 0;                          /* a new SETUP aborts any earlier IN transfer */
+    ctl_left = 0; ctl_zlp = 0; ctl_out_left = 0;                          /* a new SETUP aborts any earlier IN transfer */
     usb_std_setup(&dev, s, &r);
     if (r.bot_reset) {
         msc_reset(msc);
@@ -135,11 +179,26 @@ static void ep0_setup(void) {
     } else if (r.clear_halt_ep == 0x01) {               /* host resets its OUT toggle to DATA0 */
         ep_clr_dtog_bits(1, 0x4000u); ep_set_rx(1, ST_VALID);
     }
+    if (r.clear_halt_ep == 0x82) {                      /* host resets its IN toggle to DATA0 */
+        ep_clr_dtog_bits(2, 0x0040u); ep_set_tx(2, ST_NAK); tx2_busy = 0; tx2_zlp = 0;
+    } else if (r.clear_halt_ep == 0x02) {               /* host resets its OUT toggle to DATA0 */
+        ep_clr_dtog_bits(2, 0x4000u); ep_set_rx(2, ST_VALID);
+    }
     if (r.configured_changed) {
         ep_clr_dtog_bits(1, 0x4040u);
         ep_set_rx(1, ST_VALID); ep_set_tx(1, ST_NAK);
         tx_busy = rx_held = 0;
         msc_reset(msc);
+    }
+    if (r.configured_changed) {
+        ep_clr_dtog_bits(2, 0x4040u);
+        ep_set_rx(2, ST_VALID); ep_set_tx(2, ST_NAK);
+        cdc_reset_state();
+    }
+    if (r.dtr_changed) {                                /* either edge: a session never gets the */
+        cdc_dtr = dev.dtr;                              /* previous one's bytes (consumer-side ops) */
+        bf_clear(&cdc_tx);
+        ep_set_tx(2, ST_NAK); tx2_busy = 0; tx2_zlp = 0;   /* drop an armed, not yet sent IN packet */
     }
     if (r.set_address) { pending_addr = 1; addr = r.new_address; }
     switch (r.act) {
@@ -153,6 +212,11 @@ static void ep0_setup(void) {
     }
     case USB_STATUS_IN:
         PMA(2) = 0; ep_set_tx(0, ST_VALID); ep_set_rx(0, ST_VALID);
+        break;
+    case USB_DATA_OUT:
+        ctl_out_left = (uint8_t)r.len;
+        if (ctl_out_left == 0) { PMA(2) = 0; ep_set_tx(0, ST_VALID); }   /* no data: straight to status */
+        ep_set_rx(0, ST_VALID);
         break;
     default:
         ep_set_tx(0, ST_STALL); ep_set_rx(0, ST_VALID);  /* stall; next SETUP still accepted */
@@ -172,7 +236,17 @@ static void service_ctr(void) {
             }
             if (v & EP_CTR_RX) {
                 if (v & EP_SETUP) ep0_setup();
-                else { ep_clr_ctr_rx(0); ep_set_rx(0, ST_VALID); }   /* status OUT */
+                else {
+                    ep_clr_ctr_rx(0);
+                    if (ctl_out_left) {                  /* SET_LINE_CODING data stage */
+                        uint8_t b[64]; int n = rx_count(0); if (n > 64) n = 64;
+                        pma_read(EP0_RX, b, n);
+                        usb_std_data_out(&dev, b, (uint16_t)n);
+                        ctl_out_left = (uint8_t)(n >= ctl_out_left ? 0 : ctl_out_left - n);
+                        if (!ctl_out_left) { PMA(2) = 0; ep_set_tx(0, ST_VALID); }   /* status IN */
+                    }
+                    ep_set_rx(0, ST_VALID);
+                }
             }
         } else if (ep == 1) {
             if (v & EP_CTR_RX) {                        /* hardware NAKs further OUT packets now */
@@ -183,6 +257,17 @@ static void service_ctr(void) {
             }
             if (v & EP_CTR_TX) { ep_clr_ctr_tx(1); tx_busy = 0; }
             ep1_pump();
+        } else if (ep == 2) {
+            if (v & EP_CTR_RX) {                         /* hardware NAKs further OUT packets now */
+                ep_clr_ctr_rx(2);
+                int n = rx_count(2); if (n > 64) n = 64;
+                pma_read(EP2_RX, rx2buf, n);
+                rx2_len = (uint8_t)n; rx2_held = 1;
+            }
+            if (v & EP_CTR_TX) { ep_clr_ctr_tx(2); tx2_busy = 0; }
+            ep2_pump();
+        } else if (ep == 3) {
+            ep_clr_ctr_tx(3); ep_clr_ctr_rx(3);
         } else {
             USB_EPR(ep) = 0;                            /* unexpected endpoint */
         }
@@ -233,6 +318,7 @@ void usbd_init(msc_t *m) {
     for (uint32_t t0 = millis(); millis() - t0 < 2; ) WDT_CMD = 0xAAAA;
     USB_CNTR = 0u;
     USB_ISTR = 0u;
+    bf_init(&cdc_tx, cdc_tx_mem, CDC_TX_SIZE); bf_init(&cdc_rx, cdc_rx_mem, CDC_RX_SIZE);
     bus_reset();
     inited = 1;
     irq_start();
@@ -247,6 +333,7 @@ void usbd_poll(void) {
     msc_task(msc);                                      /* locks only around its state accesses */
     usb_lock();
     ep1_pump();
+    ep2_pump();
     usb_unlock();
     busy = 0;
 }
@@ -258,9 +345,11 @@ void usbd_detach(void) {
     irq_stop();                                         /* no reset/SE0 storm, no EP1 service */
     detached = 1;
     ep_set_rx(1, ST_NAK); ep_set_tx(1, ST_NAK);
+    ep_set_rx(2, ST_NAK); ep_set_tx(2, ST_NAK);
     usb_std_init(&dev);                                 /* not configured any more */
     msc_reset(msc);
     tx_busy = rx_held = pending_addr = ctl_left = ctl_zlp = 0;
+    cdc_reset_state();
     usb_unlock();
 }
 
@@ -285,3 +374,15 @@ int usbd_configured(void) {
 }
 
 uint32_t usbd_last_sof_ms(void) { return last_sof; }
+
+int usbd_cdc_open(void) { return usbd_host() && *(volatile uint8_t *)&cdc_dtr; }
+bytefifo_t *usbd_cdc_txfifo(void) { return &cdc_tx; }
+uint32_t usbd_cdc_read(uint8_t *p, uint32_t max) {
+    uint32_t n = bf_read(&cdc_rx, p, max);
+    if (n) usbd_cdc_kick();                          /* a held OUT packet may fit now */
+    return n;
+}
+void usbd_cdc_kick(void) {
+    if (!inited) return;
+    usb_lock(); ep2_pump(); usb_unlock();
+}

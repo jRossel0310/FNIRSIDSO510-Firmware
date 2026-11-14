@@ -19,6 +19,9 @@
 #include "msc.h"
 #include "usbd.h"
 #include "save.h"
+#include <string.h>
+#include "stream.h"
+#include "logger.h"
 
 #define REC_MAX (4 * 1200)
 
@@ -46,10 +49,11 @@ static meas_avg_t meas_avg;
 static uint8_t zeroed, zero_failed;
 #define UNCAL() (!cal.valid && !zeroed)
 
+static uint8_t usb_marker;      /* "USB" shown in the top bar (frames streaming) */
 static const char *toast_msg;
 static void toast(const char *msg, uint32_t ms) { toast_msg = msg; ui_toast(msg); toast_until = millis() + ms; }
 /* Status bars; re-show an active toast, since the mode label shares its columns. */
-static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); }
+static void draw_bars(void) { ui_draw_bars(&st, UNCAL()); if (toast_until) ui_toast(toast_msg); if (usb_marker) ui_draw_usb(1); }
 
 static uint16_t fe_pwm;          /* offset PWM last applied */
 static uint32_t fe_settle_need;  /* settle time owed by the last apply_fe() */
@@ -139,6 +143,7 @@ static void process_capture(void) {
     meas_avg_update(&meas_avg, &raw, &last_meas);
     have_trace = 1; trace_vdiv = st.vdiv; trace_x10 = st.probe_x10;
     ui_draw_meas(&st, &last_meas);
+    stream_frame(shown, shown_n, &shown_meta);
 }
 
 static void minmax(int *mn, int *mx) {
@@ -309,11 +314,159 @@ static void do_autozero(void) {
 }
 
 static void power_down(void) {
+    adc_abort();                 /* stop the logger ring DMA before power-off */
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);
     usbd_detach();               /* a host sees an unplug, not a dead drive */
     power_off();
     for (;;) WDT_CMD = 0xAAAA;   /* on USB power the scope stays alive; keep the watchdog quiet */
+}
+
+static uint8_t ring[16384];
+static uint8_t stage[sizeof ring / 2];   /* stable copy of the half being sent */
+static uint32_t stage_len, stage_off;    /* stage[stage_off..stage_len) is still to be sent */
+static uint32_t ring_n;                 /* even, <= sizeof ring: halves of ~100 ms */
+static uint32_t ring_consumed;
+static uint32_t log_rate, log_next_ui;
+static int log_vmin = 255, log_vmax, log_cnt; static uint32_t log_sum;
+
+/* Front-end settle while logging (V/div or offset change, and logger start). A sample taken before the
+   change, or while the range relays and the PA7 offset-PWM filter settle, must never go out under the
+   new LOGMETA. The rule:
+   - discard_until = now + max(fe_settle_need, FE_SETTLE_MS) (the sub-project 1 settle model);
+   - on a change while running: the unsent rest of the stage is lost, and so is every ring half up to
+     the first one that started filling after discard_until. At the first pass at or after
+     discard_until (time read before the completion counter, count c), that is the half whose
+     completion makes the count c + 2: the half completing at c + 1 was already filling at that pass.
+     This also drops the half that was in progress at the change. All of it is counted lost (DROP);
+   - at logger start the ring DMA is simply not started until discard_until, so no sample exists from
+     before the change and the stream starts at index 0 without a gap;
+   - LOGMETA is queued just before the first clean half is staged (stream.c sends the DROP for the
+     lost samples first), so the first LOG after a LOGMETA holds only samples taken at that setting. */
+static uint8_t log_ring_wait;           /* start: ring DMA not started yet */
+static uint8_t log_hold, log_clean_set; /* change while running: halves discarded until log_clean_from */
+static uint32_t log_discard_until, log_clean_from;
+
+static uint32_t take_settle(void) {
+    uint32_t need = fe_settle_need > FE_SETTLE_MS ? fe_settle_need : FE_SETTLE_MS;
+    fe_settle_need = 0;
+    return need;
+}
+
+static void log_send_meta(void) {
+    stream_logmeta(log_rate, vdiv_mv[st.vdiv], st.probe_x10, st.coupling_dc,
+                   (int16_t)(ADC_CENTER + st.offset), fe_pwm);
+}
+
+static void log_fe_changed(void) {      /* call right after apply_fe() */
+    log_discard_until = millis() + take_settle();
+    if (log_ring_wait) return;          /* not started yet: just start later */
+    if (stage_off < stage_len) stream_log_lost(stage_len - stage_off);
+    stage_len = stage_off = 0;
+    log_hold = 1; log_clean_set = 0;
+}
+
+static int hook_log_start(uint32_t rate) {
+    rate_cfg_t q = units_rate_for_hz(rate);
+    if (!q.rate_hz) return -1;
+    adc_abort(); armed = 0;
+    st.menu_open = 0;
+    rc = q;                              /* apply_fe uses rc.rate_hz for the cal set */
+    adc_set_rate(q.psc, q.arr);
+    apply_fe();
+    log_rate = rate;
+    ring_n = rate / 5;                   /* two halves of ~100 ms */
+    if (ring_n > sizeof ring) ring_n = sizeof ring;
+    if (ring_n < 256) ring_n = 256;
+    ring_n &= ~1u;
+    log_vmin = 255; log_vmax = 0; log_sum = 0; log_cnt = 0;
+    lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
+    log_next_ui = millis();
+    stage_len = stage_off = 0;
+    log_hold = 0; log_clean_set = 0;
+    log_ring_wait = 1;                   /* ring + LOGMETA once the front end has settled */
+    log_discard_until = millis() + take_settle();
+    return 0;
+}
+
+static void hook_log_stop(void) {
+    adc_abort(); armed = 0;
+    log_ring_wait = 0; log_hold = 0; stage_len = stage_off = 0;
+    apply_time();                         /* back to the scope's own timebase */
+    settle_until = millis() + FE_SETTLE_MS;
+    have_trace = 0;
+    redraw_all();
+}
+
+static const stream_hooks_t hooks = {hook_log_start, hook_log_stop};
+
+/* Take the newest completed ring half (if any) into the stage. */
+static void log_take_half(void) {
+    uint32_t t = millis();                             /* before the counter: see the settle rule */
+    uint32_t done = adc_ring_completed();              /* one snapshot per pass */
+    if (log_hold && !log_clean_set && (int32_t)(t - log_discard_until) >= 0) {
+        log_clean_from = done + 2; log_clean_set = 1;
+    }
+    ring_pick_t pk = logger_pick(done, &ring_consumed, ring_n);
+    if (pk.first < 0) return;
+    /* a newer half is here: what is left of the stage was not sent in time */
+    if (stage_off < stage_len) stream_log_lost(stage_len - stage_off);
+    stage_len = stage_off = 0;
+    if (pk.lost) stream_log_lost(pk.lost);
+    uint32_t hl = ring_n / 2;
+    if (log_hold && !(log_clean_set && (int32_t)(done - log_clean_from) >= 0)) { stream_log_lost(hl); return; }
+    memcpy(stage, ring + (uint32_t)pk.first * hl, hl);
+    if (adc_ring_completed() != done) { stream_log_lost(hl); return; }   /* DMA may have wrapped into it */
+    if (log_hold) { log_hold = 0; log_send_meta(); }   /* first clean half: its settings go first */
+    stage_len = hl;
+    for (uint32_t i = 0; i < hl; i++) {
+        if (stage[i] < log_vmin) log_vmin = stage[i];
+        if (stage[i] > log_vmax) log_vmax = stage[i];
+        log_sum += stage[i];
+    }
+    log_cnt += (int)hl;
+}
+
+/* Logger mode, one main-loop step: move completed ring halves to USB (as much of the staged half as
+   fits in the TX FIFO each pass), keys, status screen. */
+static void logger_step(void) {
+    if (log_ring_wait) {
+        if ((int32_t)(millis() - log_discard_until) >= 0) {
+            log_ring_wait = 0;
+            log_send_meta();
+            ring_consumed = 0;
+            adc_ring_start(ring, (uint16_t)ring_n);
+        }
+    } else {
+        log_take_half();
+        if (stage_off < stage_len) stage_off += stream_log_fit(stage + stage_off, stage_len - stage_off);
+    }
+    kev_t ev[8];
+    int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
+    for (int i = 0; i < ne; i++) {
+        int tap = ev[i].type == KEV_SHORT || ev[i].type == KEV_REPEAT;
+        if (ev[i].key == KEY_POWER && ev[i].type == KEV_LONG) power_down();
+        else if (ev[i].key == KEY_RUN && ev[i].type == KEV_SHORT) { stream_stop_log(); return; }
+        else if (tap && (ev[i].key == KEY_UP || ev[i].key == KEY_DOWN)) {
+            int nv = st.vdiv + (ev[i].key == KEY_UP ? -1 : 1);       /* Up = more sensitive */
+            if (nv >= 0 && nv < NUM_VDIV) { st.vdiv = (int8_t)nv; apply_fe(); log_fe_changed(); }
+        }
+    }
+    uint32_t now = millis();
+    if ((int32_t)(now - log_next_ui) >= 0) {
+        log_next_ui = now + 250;
+        uint32_t sent, dropped;
+        stream_log_stats(&sent, &dropped);
+        float vpc = units_volts_per_code(st.vdiv, st.probe_x10);
+        int zero = ADC_CENTER + st.offset;
+        float mean = log_cnt ? (float)log_sum / (float)log_cnt : (float)zero;
+        ui_draw_logger(log_rate, sent, dropped,
+                       log_cnt ? (float)(log_vmin - zero) * vpc : 0.0f,
+                       log_cnt ? (float)(log_vmax - zero) * vpc : 0.0f,
+                       (mean - (float)zero) * vpc,
+                       (float)vdiv_mv[st.vdiv] * 1e-3f * (st.probe_x10 ? 10.0f : 1.0f));
+        log_vmin = 255; log_vmax = 0; log_sum = 0; log_cnt = 0;
+    }
 }
 
 int main(void) {
@@ -331,6 +484,7 @@ int main(void) {
     spiflash_init();
     msc_init(&msc, &vol_disk);
     usbd_init(&msc);
+    stream_init(&hooks);
     gen_sine_init(2399);          /* 1 kHz test sine until sub-project 3 adds the generator UI */
     apply_time();
     redraw_all();
@@ -339,6 +493,10 @@ int main(void) {
 
     for (;;) {
         usbd_poll();
+        stream_poll();
+        if (stream_mode() == STREAM_LOG) { logger_step(); WDT_CMD = 0xAAAA; continue; }
+        int usb_on = stream_mode() == STREAM_FRAMES;
+        if (usb_on != usb_marker) { usb_marker = (uint8_t)usb_on; ui_draw_usb(usb_on); }
         kev_t ev[8];
         int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
         uint32_t chg = 0;

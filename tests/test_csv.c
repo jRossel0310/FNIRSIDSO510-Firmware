@@ -17,7 +17,7 @@ void test_csv(void) {
     CHECK(n > 0);
     b[n > 0 ? n : 0] = 0;
     CHECK_STR(b,
-        "# DSO-510 custom firmware 0.2.0\n"
+        "# DSO-510 custom firmware 0.3.0\n"
         "# sample_rate_hz=1000000\n"
         "# volts_per_div=1.0000\n"
         "# coupling=DC\n"

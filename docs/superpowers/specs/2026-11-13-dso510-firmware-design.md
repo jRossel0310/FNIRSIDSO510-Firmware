@@ -1,7 +1,7 @@
 # DSO-510 replacement firmware — design
 
 Date: 2026-11-13
-Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run).
+Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run).
 
 ## Goal
 
@@ -268,3 +268,90 @@ Approved in conversation 2026-11-13. Hardware facts: `NOTES.md` § SPI NOR flash
 ### Out of scope for sub-project 2
 
 Live streaming (sub-project 4), generator UI (3), screenshots (dropped), deleting files on the scope.
+
+## Sub-project 4: live USB streaming + Python plotter
+
+Approved in conversation 2026-11-13 (built before sub-project 3; the two are independent).
+
+### USB: composite drive + serial port
+
+- The device becomes a composite: the existing MSC drive (interface 0, bulk 0x81/0x01, unchanged) plus a
+  CDC-ACM serial port (communication interface with a notification interrupt IN endpoint, data interface
+  with one bulk IN and one bulk OUT endpoint, 64-byte packets), grouped with an Interface Association
+  Descriptor. Same VID:PID 2e3c:5720. Native drivers on Linux (`/dev/ttyACMn`), Windows 10+ (`COMn`) and
+  macOS (`/dev/cu.usbmodem*`); no driver install.
+- CDC class requests: SET_LINE_CODING / GET_LINE_CODING (accepted and echoed, baud rate ignored) and
+  SET_CONTROL_LINE_STATE. DTR set = a host program has the port open; DTR cleared or USB detach = closed.
+- The existing interrupt-driven driver serves both functions; drive and serial share the bus bandwidth.
+
+### Protocol
+
+Scope → PC: binary packets `A5 5A | type u8 | len u16 LE | payload[len] | crc16 LE`, CRC-16/CCITT-FALSE
+(poly 0x1021, init 0xFFFF) over type, len and payload. The receiver resynchronises on the next `A5 5A`
+after a bad CRC. Multi-byte payload fields are little-endian.
+
+| Type | Name | Payload |
+|---|---|---|
+| 0x01 | INFO | ASCII `key=value` lines: `fw=<version>`, `mode=<idle\|frames\|log>`, `rates=<comma list>` |
+| 0x02 | FRAME | meta (below) + `n u16` + n raw ADC codes |
+| 0x03 | LOGMETA | `rate_hz u32`, `vdiv_mv u16`, `probe_x10 u8`, `coupling_dc u8`, `zero_code i16`, `offset_pwm u16` |
+| 0x04 | LOG | `first_index u32` (running sample counter since LOG start) + raw ADC codes |
+| 0x05 | DROP | `first_index u32`, `count u32`: samples lost before index `first_index` |
+| 0x06 | OK | ASCII echo of the accepted command |
+| 0x07 | ERR | ASCII reason |
+
+FRAME meta = the CSV metadata: `rate_hz u32, vdiv_mv u16, coupling_dc u8, probe_x10 u8, trig_mode u8,
+edge u8, triggered u8, zero_code i16, trig_level_code i16, trig_index i32, offset_pwm u16`. Volts are
+derived exactly as in the CSV (µV/code = vdiv_mv × 40 × probe factor; volts = (code − zero_code) × µV/code).
+
+PC → scope: ASCII lines terminated by `\n` (max 32 chars): `INFO?`, `FRAMES`, `LOG <rate_hz>`, `STOP`.
+Each command gets OK or ERR (unknown command, unsupported rate, or scope busy, e.g. mid auto-set).
+
+### Frames mode
+
+- The scope behaves exactly as without streaming (screen, keys, auto-set, CSV save).
+- After `process_capture` accepts a capture and the port is open in frames mode, the record is queued as a
+  FRAME. If the previous frame is still being sent, the new one is skipped; streaming never blocks or slows
+  capture. The top bar shows `USB` while frames are streaming.
+
+### Logger mode
+
+- Rates (S/s): 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000. Gap-free target up to
+  200 kS/s; 500 kS/s is best effort.
+- The ADC runs continuously into a DMA ring buffer (circular, half/full-transfer). Each completed half is
+  sent as LOG packets. If USB cannot keep up, unsent data is discarded and a DROP packet records exactly how
+  many samples were lost; gaps are never silent.
+- Screen: status view with `LOGGING`, the rate, the samples sent, drops, and live min/max/mean volts.
+- Keys while logging: Up/Down change V/div (a new LOGMETA is sent; the front-end settle wait applies), Run
+  stops logging and returns to the scope, Power powers off. Trigger, auto-set and CSV save are unavailable.
+- Logging stops on `STOP`, when the port is closed (DTR cleared), or when USB detaches.
+- A CSV save with the drive mounted soft-disconnects USB (sub-project 2), which also drops the serial port;
+  the host script reconnects and resumes.
+
+### Python tool (`tools/`)
+
+- `tools/dsoproto.py`: packet decoder (resync, CRC), FRAME/LOGMETA/LOG/DROP parsing, volts conversion, and
+  CSV writers producing the same format as the scope's CSV. No GUI dependencies.
+- `tools/scope_live.py`: pyqtgraph + PyQt5 GUI, pyserial. Finds the port by VID:PID (override `--port`).
+  Plot: frames mode shows the latest frame (t = 0 at trigger); logger mode shows a scrolling window of the
+  last N seconds with breaks at DROP gaps. Controls: mode (Frames/Logger), logger rate, Start/Stop,
+  Record to CSV, window length. Status line: connection, frames/s or S/s, totals, drops. Auto-reconnects
+  and resumes the previous mode.
+- Recording: frames mode writes one CSV per frame (`frame_0001.csv`, …) in the scope's format; logger mode
+  streams one CSV with a header from LOGMETA and `# gap=<n> samples at <index>` lines at drops.
+- Dependencies: `pip install pyserial pyqtgraph PyQt5` (`tools/requirements.txt`).
+
+### Testing
+
+- Host (C): packet encoder + CRC, command parser, frame queue skip logic, logger ring/drop accounting,
+  composite descriptors and CDC class requests.
+- Python (pytest): decoder against shared golden test vectors (`tests/vectors/*.bin` produced by the C
+  encoder test and committed), resync after corruption, DROP/gap handling, CSV output identical to the
+  firmware CSV format.
+- On device: drive + serial both enumerate; frames on the generator sine; logger at 10 kS/s and 200 kS/s for
+  minutes with zero drops; 500 kS/s best effort; replug during streaming; drive copy while streaming.
+
+### Out of scope for sub-project 4
+
+Full remote control of scope settings (timebase, V/div, trigger) from the PC, streaming over anything but
+USB, Windows/macOS-specific packaging.
