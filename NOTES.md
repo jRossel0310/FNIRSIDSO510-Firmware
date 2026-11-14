@@ -174,3 +174,18 @@ Other:
 - Hardware result (2026-11-13): status registers SR1=00, SR2=00, SR3=20 (no block protection). A sector write
   (erase+program+verify) takes about 31 ms. CS timing is mandatory: CS must rise only after SPI3 BSY is clear
   (last bit fully clocked) and stay high >= ~250 ns; without that the chip ignored every erase and program.
+
+## Hardware checks for sub-project 2 (2026-11-13)
+
+- flashdiag: SPI NOR erase/program work only with the CS fix (BSY-wait + CS-high hold); sector write ≈ 31 ms.
+- usbdisk / scope app: enumerates first try as `2e3c:5720`, 1280 × 4096-byte removable disk, vfat UUID 6252-DB82
+  (same volume as stock). Full 5 MiB backup taken with dd (`dumps/userdrive-backup.img`, not committed).
+- Long-press Run saves: CAP0001–0004 unplugged (3 untriggered zero captures `triggered=0`, 1 sine `triggered=1`);
+  each file 4800 rows + 10 header lines (~110 KB). Sine file: 999.8 Hz over 8 cycles, 0.38–2.66 V (2.28 Vpp),
+  sample at t=0 = 1.500 V = trigger level, 600 kS/s spacing — matches the screen.
+- Save while mounted (CAP0005–0007): soft-disconnect → kernel "USB disconnect" → re-enumeration ~2 s later, files
+  complete. The desktop did not auto-remount after the re-plug (host policy; mount via file manager or
+  `udisksctl mount -b /dev/sdX`).
+- `fsck.vfat -n`: clean apart from the dirty bit (expected after unplugging while mounted / soft-disconnect).
+- File timestamps are the fixed FatFs date 2026-11-13 00:00 (no RTC); hosts show it shifted by their time zone.
+- Not run (user's choice): stock-firmware compatibility check and Windows.
