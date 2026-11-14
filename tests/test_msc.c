@@ -142,6 +142,50 @@ void test_msc(void) {
     cbw(18, 0, 0, pa, 6); run_in(); CHECK_EQ(csw_status, 0);
     cbw(19, 0, 0, ss, 6); run_in(); CHECK_EQ(csw_status, 0);
     cbw(20, 0, 0, vf, 10); run_in(); CHECK_EQ(csw_status, 0);
+    /* BOT Hi/direction mismatches: exactly Hi bytes move in the host's direction, then CSW */
+    static uint8_t keep[2 * MSC_BLOCK];
+    memcpy(keep, disk[0], sizeof keep);
+    cbw(30, 2 * MSC_BLOCK, 1, r1, 10); run_in();                       /* (a) READ n=1, Hi=2 blocks */
+    CHECK_EQ(in_len, 2 * MSC_BLOCK); CHECK_EQ(csw_status, 1); CHECK_EQ(csw_residue, 2 * MSC_BLOCK);
+    cbw(31, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    uint8_t w2[10] = {0x2A, 0, 0, 0, 0, 0, 0, 0, 2, 0};
+    cbw(32, MSC_BLOCK, 0, w2, 10); run_out(junk, MSC_BLOCK, 6000); run_in();   /* (b) WRITE n=2, Hi=1 block */
+    CHECK_EQ(csw_status, 1); CHECK(memcmp(disk[0], keep, sizeof keep) == 0);
+    cbw(33, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    cbw(34, MSC_BLOCK, 0, r1, 10); run_out(junk, MSC_BLOCK, 6000); run_in();   /* (c) READ with OUT direction */
+    CHECK_EQ(in_len, 0); CHECK_EQ(csw_status, 1);
+    cbw(35, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    cbw(36, 64, 1, tur, 6); run_in();                                  /* (d) TUR with Hi=64 IN */
+    CHECK_EQ(in_len, 64); CHECK_EQ(in[0], 0); CHECK_EQ(in[63], 0); CHECK_EQ(csw_status, 0); CHECK_EQ(csw_residue, 64);
+    cbw(37, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    cbw(38, 36, 0, inq, 6); run_out(junk, 36, 6000); run_in();         /* (e) INQUIRY with OUT direction */
+    CHECK_EQ(in_len, 0); CHECK_EQ(csw_status, 1);
+    cbw(39, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    cbw(40, 0, 1, r1, 10); run_in(); CHECK_EQ(csw_status, 1);          /* READ n=1 with Hi=0 */
+    cbw(41, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
+    /* INQUIRY EVPD unsupported */
+    uint8_t evpd[6] = {0x12, 1, 0x80, 0, 36, 0};
+    cbw(42, 36, 1, evpd, 6); run_in();
+    CHECK_EQ(in_len, 36); CHECK_EQ(csw_status, 1);
+    sense(&k, &a, &q); CHECK_EQ(k, 5); CHECK_EQ(a, 0x24);
+    /* SYNCHRONIZE CACHE(10) passes */
+    uint8_t sc[10] = {0x35};
+    cbw(43, 0, 0, sc, 10); run_in(); CHECK_EQ(csw_status, 0);
+    /* medium removed: format capacities report no media; pending write is not performed */
+    memcpy(keep, disk[4], sizeof keep);
+    uint8_t w2b[10] = {0x2A, 0, 0, 0, 0, 4, 0, 0, 2, 0};
+    cbw(44, 2 * MSC_BLOCK, 0, w2b, 10);
+    run_out(pat, MSC_BLOCK, 7000); msc_task(&M);                       /* block 0 written */
+    CHECK(memcmp(disk[4], pat, MSC_BLOCK) == 0);
+    msc_set_present(&M, 0);
+    run_out(pat + MSC_BLOCK, MSC_BLOCK, 7000); run_in();
+    CHECK_EQ(csw_status, 1); CHECK(memcmp(disk[5], keep + MSC_BLOCK, MSC_BLOCK) == 0);
+    sense(&k, &a, &q); CHECK_EQ(k, 2); CHECK_EQ(a, 0x3A);
+    cbw(45, 252, 1, rfc, 10); run_in();
+    CHECK_EQ(in_len, 12); CHECK_EQ(in[8], 3);
+    msc_set_present(&M, 1);
+    cbw(46, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 1);          /* unit attention */
+    cbw(47, 0, 0, tur, 6); run_in(); CHECK_EQ(csw_status, 0);
     /* garbage instead of a CBW is ignored */
     uint8_t junk31[31] = {1, 2, 3};
     CHECK_EQ(msc_rx(&M, junk31, 31, 0), 0);

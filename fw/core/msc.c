@@ -41,61 +41,71 @@ static int ready(msc_t *m, int dir_in) {
 }
 
 /* Small data-in response already in buf[0..n): send min(n, Hi). */
-static void respond(msc_t *m, uint32_t n) {
+static void respond(msc_t *m, uint32_t n, int dir_in) {
+    if (m->hi > 0 && !dir_in) { fail(m, dir_in, 5, 0x24, 0); return; }   /* host expects data-out */
     if (n > m->hi) n = m->hi;
     m->len = n; m->pos = 0; m->status = 0; m->residue = m->hi - n;
     m->state = n ? S_IN : S_STATUS;
 }
 
-static void pass(msc_t *m) { m->status = 0; m->residue = m->hi; m->state = S_STATUS; }
+/* No data of our own: move Hi bytes in the host's direction (fill/discard), CSW good, residue = Hi. */
+static void pass(msc_t *m, int dir_in) {
+    m->status = 0; m->residue = m->hi; m->left = m->hi;
+    m->state = m->hi == 0 ? S_STATUS : dir_in ? S_ZERO_IN : S_DISCARD;
+}
 
 static void command(msc_t *m, const uint8_t *cb, int dir_in) {
     uint8_t *b = m->buf;
     for (int i = 0; i < 36; i++) b[i] = 0;
     switch (cb[0]) {
     case 0x00:                                           /* TEST UNIT READY */
-        if (ready(m, dir_in)) pass(m);
+        if (ready(m, dir_in)) pass(m, dir_in);
         break;
     case 0x03:                                           /* REQUEST SENSE */
         b[0] = 0x70; b[2] = m->key; b[7] = 10; b[12] = m->asc; b[13] = m->ascq;
         set_sense(m, 0, 0, 0);
-        respond(m, 18);
+        respond(m, 18, dir_in);
         break;
     case 0x12: {                                         /* INQUIRY */
         static const char id[] = "DSO-510 Capture Drive   0.2 ";   /* vendor 8, product 16, rev 4 */
+        if (cb[1] & 1) { fail(m, dir_in, 5, 0x24, 0); break; }   /* EVPD not supported */
         b[1] = 0x80; b[2] = 0x02; b[3] = 0x02; b[4] = 31;
         for (int i = 0; i < 28; i++) b[8 + i] = (uint8_t)id[i];
-        respond(m, 36);
+        respond(m, 36, dir_in);
         break;
     }
     case 0x1A:                                           /* MODE SENSE(6) */
         b[0] = 3;
-        respond(m, 4);
+        respond(m, 4, dir_in);
         break;
     case 0x5A:                                           /* MODE SENSE(10) */
         b[1] = 6;
-        respond(m, 8);
+        respond(m, 8, dir_in);
         break;
-    case 0x1E: case 0x1B: case 0x2F:                     /* PREVENT/ALLOW, START STOP, VERIFY */
-        pass(m);
+    case 0x1E: case 0x1B: case 0x2F: case 0x35:          /* PREVENT/ALLOW, START STOP, VERIFY, SYNC CACHE */
+        pass(m, dir_in);
         break;
     case 0x23:                                           /* READ FORMAT CAPACITIES */
-        b[3] = 8; put_be32(b + 4, m->disk->blocks); b[8] = 2; b[10] = 0x10;   /* 0x001000 = 4096 */
-        respond(m, 12);
+        b[3] = 8; put_be32(b + 4, m->disk->blocks); b[8] = m->present ? 2 : 3; b[10] = 0x10;   /* 0x001000 = 4096 */
+        respond(m, 12, dir_in);
         break;
     case 0x25:                                           /* READ CAPACITY(10) */
         if (!ready(m, dir_in)) break;
         put_be32(b, m->disk->blocks - 1); put_be32(b + 4, MSC_BLOCK);
-        respond(m, 8);
+        respond(m, 8, dir_in);
         break;
     case 0x28: case 0x2A: {                              /* READ(10) / WRITE(10) */
         int rd = cb[0] == 0x28;
-        if (!ready(m, rd)) break;
+        if (!ready(m, dir_in)) break;
         uint32_t lba = be32(cb + 2), n = (uint32_t)cb[7] << 8 | cb[8];
-        if (lba >= m->disk->blocks || n > m->disk->blocks - lba) { fail(m, rd, 5, 0x21, 0); break; }
-        if (n == 0) { pass(m); break; }
+        if (dir_in != rd || m->hi != n * MSC_BLOCK) {      /* BOT cases 2-13: Hi/direction mismatch */
+            if (n == 0 && m->hi == 0) { pass(m, dir_in); break; }
+            fail(m, dir_in, 5, 0x24, 0); break;
+        }
+        if (lba >= m->disk->blocks || n > m->disk->blocks - lba) { fail(m, dir_in, 5, 0x21, 0); break; }
+        if (n == 0) { pass(m, dir_in); break; }
         m->lba = lba; m->nblk = n; m->status = 0;
-        m->residue = m->hi > n * MSC_BLOCK ? m->hi - n * MSC_BLOCK : 0;
+        m->residue = 0;
         m->pos = 0;
         if (rd) { m->state = S_READ; m->io = 1; } else { m->state = S_WRITE; }
         break;
@@ -139,6 +149,12 @@ void msc_task(msc_t *m) {
         m->len = MSC_BLOCK; m->pos = 0;
     } else if (m->io == 2) {
         m->io = 0;
+        if (!m->present) {                               /* medium removed while writing */
+            set_sense(m, 2, 0x3A, 0);
+            m->status = 1; m->residue = m->hi; m->left = (m->nblk - 1) * MSC_BLOCK;
+            m->state = m->left ? S_DISCARD : S_STATUS;
+            return;
+        }
         if (m->disk->write(m->lba, m->buf)) {            /* write error: discard the rest */
             set_sense(m, 3, 0x0C, 0);
             m->status = 1; m->residue = m->hi; m->left = (m->nblk - 1) * MSC_BLOCK;
