@@ -3,8 +3,27 @@
 
 void test_units(void) {
     rate_cfg_t r;
-    r = units_rate_for_tdiv(500);          /* capped at 12 MS/s */
-    CHECK_EQ(r.psc, 0); CHECK_EQ(r.arr, 19); CHECK_EQ(r.rate_hz, 12000000);
+    r = units_rate_for_tdiv(50);           /* 48 MS/s, 4 streams */
+    CHECK_EQ(r.streams, 4); CHECK_EQ(r.psc, 0); CHECK_EQ(r.arr, 4); CHECK_EQ(r.rate_hz, 48000000);
+    r = units_rate_for_tdiv(500);
+    CHECK_EQ(r.streams, 4); CHECK_EQ(r.rate_hz, 48000000);
+    r = units_rate_for_tdiv(2000);         /* 96 samples/div */
+    CHECK_EQ(r.streams, 4); CHECK_EQ(r.rate_hz, 48000000);
+    r = units_rate_for_tdiv(5000);         /* 120 samples/div at 24 MS/s, 2 streams */
+    CHECK_EQ(r.streams, 2); CHECK_EQ(r.psc, 0); CHECK_EQ(r.arr, 4); CHECK_EQ(r.rate_hz, 24000000);
+    r = units_rate_for_tdiv(10000);        /* single stream from here on */
+    CHECK_EQ(r.streams, 1); CHECK_EQ(r.arr, 19); CHECK_EQ(r.rate_hz, 12000000);
+    r = units_rate_for_tdiv(50000000);
+    CHECK_EQ(r.streams, 1);
+    CHECK_EQ(NUM_TDIV, 19); CHECK_EQ(tdiv_ns[0], 50); CHECK_EQ(tdiv_ns[2], 200); CHECK_EQ(tdiv_ns[3], 500);
+    CHECK_EQ(tdiv_ns[TDIV_2US], 2000); CHECK_EQ(tdiv_ns[NUM_TDIV - 1], 50000000);
+    for (int i = 0; i < NUM_TDIV; i++) {   /* every record splits evenly over the streams */
+        rate_cfg_t c = units_rate_for_tdiv(tdiv_ns[i]);
+        uint32_t n = 4u * units_samples_per_screen(c.rate_hz, tdiv_ns[i]);
+        if (n == 0 || n % c.streams) { CHECK(0); break; }
+    }
+    CHECK_EQ(units_samples_per_screen(48000000, 50), 24);
+    CHECK_EQ(units_rate_for_hz(500000).streams, 1);
     r = units_rate_for_tdiv(10000);        /* 120 samples/div at 12 MS/s */
     CHECK_EQ(r.psc, 0); CHECK_EQ(r.arr, 19); CHECK_EQ(r.rate_hz, 12000000);
     r = units_rate_for_tdiv(20000);

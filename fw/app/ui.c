@@ -54,7 +54,7 @@ void ui_draw_markers(const scope_state_t *s) {
     lcd_fill(PLOT_X + x, 16, 5, 4, C_ORANGE);
 }
 
-void ui_draw_gen_marker(int on) { lcd_text(28, 0, on ? "G" : " ", C_BLACK, on ? C_GREEN : C_BLACK); }
+void ui_draw_gen_marker(int on) { lcd_text(29, 0, on ? "G" : " ", C_BLACK, on ? C_GREEN : C_BLACK); }
 
 /* "2.0V" from tenths of a volt */
 static char *fmt_dv(char *b, int dv) {
@@ -118,7 +118,7 @@ void ui_draw_gen(const scope_state_t *s, uint32_t actual_mhz) {
 }
 
 void ui_draw_bars(const scope_state_t *s, int uncal) {
-    /* what the wheel | Up/Down adjust; padded to 16 columns (cols 12..27); col 28 is the G marker, 29..31 the USB marker */
+    /* what the wheel | Up/Down adjust; padded to 16 columns (cols 12..27); col 28 is a gap, 29 the G marker, 31..33 the USB marker, 35 the uncalibrated mark */
     static const char *ctl_names[] = {"Time | Volts    ", "TrigPos | Offset", "TrigPos | Level ", "Gen Freq | Amp  "};
     static const char *trig_names[] = {"Auto  ", "Normal", "Single"};
     char b[16];
@@ -140,7 +140,7 @@ void ui_draw_bars(const scope_state_t *s, int uncal) {
         l[k] = 0;
         lcd_text(12, 0, l, C_CYAN, C_BLACK);
     } else lcd_text(12, 0, ctl_names[s->ctl], C_CYAN, C_BLACK);
-    lcd_text(33, 0, uncal ? "UNC" : "   ", C_RED, C_BLACK);
+    lcd_text(35, 0, uncal ? "!" : " ", C_BLACK, uncal ? C_RED : C_BLACK);   /* no factory calibration */
 
     lcd_fill(0, 224, 21 * 8, 16, C_BLACK);
     c = lcd_text(0, 14, " ", C_WHITE, C_BLACK);
@@ -197,7 +197,7 @@ void ui_toast(const char *msg) {
 
 void ui_toast_clear(void) { lcd_fill(19 * 8, 0, 14 * 8, 16, C_BLACK); }
 
-void ui_draw_usb(int on) { lcd_text(29, 0, on ? "USB" : "   ", C_BLACK, on ? C_CYAN : C_BLACK); }
+void ui_draw_usb(int on) { lcd_text(31, 0, on ? "USB" : "   ", C_BLACK, on ? C_CYAN : C_BLACK); }
 
 static void kv_line(int row, const char *k, const char *v, uint16_t col) {
     int c = lcd_text(2, row, k, C_GRAY, C_BLACK);

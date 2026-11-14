@@ -42,6 +42,9 @@ void test_cal(void) {
 
     CHECK_EQ(cal_set_for_rate(2400000), CAL_SET_SLOW);
     CHECK_EQ(cal_set_for_rate(6000000), CAL_SET_MID);
+    CHECK_EQ(cal_set_for_rate(12000000), CAL_SET_MID);
+    CHECK_EQ(cal_set_for_rate(24000000), CAL_SET_FAST);
+    CHECK_EQ(cal_set_for_rate(48000000), CAL_SET_FAST);
 
     uint16_t p = cal_search_pwm(lin_up, 0, 128, 1000, 3000);
     CHECK(p >= 1990 && p <= 2010);   /* integer model: mean is 128 for pwm 1991..2009 */

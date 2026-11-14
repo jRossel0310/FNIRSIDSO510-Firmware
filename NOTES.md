@@ -218,3 +218,43 @@ Other:
 - Parked for sub-project 5: planner search cost near 50 kHz (est. ~10 ms, not measured); DC level and wave offset
   share one setting; quick mode with DC selected changes an amplitude that has no effect; wheel rotation on the
   Generator menu row opens the page and a further tick toggles Output; amplitude accuracy not checked with a meter.
+
+## Interleaved capture experiments (ilvtest, 2026-11-13)
+
+Bench app `fw/apps/ilvtest` (PC-driven over the serial port: register peek/poke, generator, captures).
+Probe on the generator output, range 6, generator as signal source.
+- Stock scheme decoded from `FUN_0801AD00`: TMR4 reload 4 (48 MHz ADC clock, CH3 compare 3), TRGO = update;
+  TMR8/5/3/1 gated slaves (SMS 5; ITR2, ITR2, ITR3, ITR3), reload 3, start counts 3, 1, 2, 0; overflow DMA requests
+  0x6F / 0x57 / 0x47 / 0x37 on DMA2 ch1 / DMA2 ch2 / DMA1 ch3 / DMA1 ch5.
+- 48 MS/s works: stream delays (TMR3, TMR5, TMR1, TMR8) = 0, 0.98, 2.02, 3.04 ADC clocks (std 0.07), so the
+  record order is TMR3, TMR5, TMR1, TMR8. Per-phase mean residual on a 10 kHz sine < 0.04 code.
+- Keeping the ADC clock running and freezing the slaves through TMR4's TRGO (master mode 000 <-> 010) works as
+  well as the stock stop-TMR4 start.
+- With either start, the TMR8 stream (start count 3 = reload) is sometimes one sample early: 3/400 and 1/212
+  captures from firmware, 7/25 in a slow poke-driven run. With reload preload (first period 8, start counts
+  6, 5, 4, 3, then reload 3): 0/40 whole-sample slips.
+- Every armed DMA channel immediately serves one stale request (count 257 -> 256 before the release).
+- ADC clocked at 24 MHz (TMR4 reload 9) with four streams: stream delays inconsistent (-0.9, 0.2, -1.3 clocks).
+  24 MS/s should use two streams of the 48 MHz scheme instead.
+
+## Hardware checks for sub-project 1b (2026-11-14)
+
+Scope app, probe on the generator output (50 kHz, 3.0 Vpp), checked over USB frames.
+- All 19 timebases draw (user); 200 ns/div and faster are hard to read on this screen, as expected.
+- 24 MS/s (5 us/div): 2238 frames, both streams aligned in every frame, no spikes.
+- 48 MS/s (2 us/div): stream order 0, 1, 2, 3 in every frame; no whole-sample slips in ~5000 frames.
+- **Misreads on the DMA2 streams (1 and 3):** before the spike filter about 1 frame in 3 had an isolated sample
+  ~20 codes off, always at major code transitions (0x3F/0x40, 0x7F/0x80, 0xBF/0xC0; e.g. 0x40 read as 0x58), only
+  on the two DMA2 streams. Bench (`ilvtest`, DC level parked on a boundary): ~1e-3 of reads wrong on those
+  streams, ~1e-4 on the DMA1 streams. ADC clock phase (TMR4 CH3 compare 1..4): compare 1 improves two boundaries
+  but not mid-scale and has a 20 % duty; compare 4 and inverted polarity break the capture. Kept the stock compare 3.
+  Likely cause: the two DMA controllers contend for the bus on back-to-back reads. `ilv_despike` removes the
+  isolated spikes: 0 in 3190 frames (12 M samples) afterwards.
+- Residual: in ~1 % of 48 MS/s frames stream 1 or 3 reads one ADC clock (20.8 ns) late for part of the frame.
+- 12 MS/s single stream (10 us/div): 1958 frames, no spikes.
+- Logger 100 kS/s started from 2 us/div: no drops, 0 bad CRC; scope returns to 48 MS/s frames afterwards.
+- Top bar: `G` marker now col 29, `USB` cols 31..33, uncalibrated mark is a red `!` at col 35 (user: "looks better").
+- Parked for sub-project 5: trace stretch / trigger jitter at 50 ns/div; auto-set measures frequency only at
+  12 MS/s; baseline settle at the 10/5 us/div calibration boundary.
+- User checks (reported "all three have passed"): CSV save at 2 us/div, auto-zero with the fast calibration set
+  ("ZERO done"), frequency reading with 50 kHz at 5 us/div.

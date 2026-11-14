@@ -17,3 +17,11 @@ void adc_ring_start(uint8_t *buf, uint16_t n);
 // snapshot to logger_pick(completed, &consumed, n) (fw/core/logger.h). Only the newest completed
 // half is safe to copy; older ones may already be overwritten.
 uint32_t adc_ring_completed(void);
+
+// Interleaved capture (24 / 48 MS/s): ADC clocked at 48 MHz, 2 or 4 DMA streams at 12 MS/s each.
+#define ADC_ILV_PAD 1u                     // extra sample armed per stream (a stale request may eat one)
+void adc_ilv_enter(void);                  // ADC clock to 48 MHz, slaves frozen; waits for the pipeline flush
+// Capture `per` samples on each of `streams` (2 or 4) streams. raw must hold streams * (per + ADC_ILV_PAD) bytes.
+void adc_ilv_start(uint8_t *raw, uint16_t per, int streams);
+int adc_ilv_done(void);                    // 1 once every stream is complete (or none armed)
+const uint8_t *adc_ilv_stream(int k);      // first valid sample of logical stream k of the last capture

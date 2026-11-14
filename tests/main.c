@@ -22,6 +22,7 @@ void test_stream_proto(void);
 void test_logger(void);
 void test_gen(void);
 void test_control_gen(void);
+void test_ilv(void);
 
 int main(void) {
     test_fmt();
@@ -45,6 +46,7 @@ int main(void) {
     test_logger();
     test_gen();
     test_control_gen();
+    test_ilv();
     printf("%d checks, %d failed\n", t_run, t_fail);
     return t_fail != 0;
 }

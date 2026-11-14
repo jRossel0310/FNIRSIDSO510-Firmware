@@ -64,9 +64,9 @@ void test_autoset(void) {
     /* offset jitter of <= 2 codes counts as converged */
     CHECK_EQ(fit(5, -80, 68, 192), 0); CHECK_EQ(O, -82);
 
-    /* 1 kHz: need 10*tdiv >= 2 ms -> 200 us/div (idx 8) */
+    /* 1 kHz: need 10*tdiv >= 2 ms -> 200 us/div */
     CHECK_EQ(tdiv_ns[autoset_tdiv(1000.0f)], 200000);
-    CHECK_EQ(tdiv_ns[autoset_tdiv(1e6f)], 500);
+    CHECK_EQ(tdiv_ns[autoset_tdiv(1e6f)], 200);   /* 2 periods over 10 div; was clamped to the old fastest, 500 */
     CHECK_EQ(tdiv_ns[autoset_tdiv(10.0f)], 20000000);   /* 200 ms screen = 2 periods */
     CHECK_EQ(tdiv_ns[autoset_tdiv(1.0f)], 50000000);    /* clamped to slowest */
     CHECK_EQ(autoset_tdiv(0.0f), -1);
