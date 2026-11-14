@@ -55,7 +55,7 @@ void ui_draw_markers(const scope_state_t *s) {
 
 void ui_draw_bars(const scope_state_t *s, int uncal) {
     /* what the wheel | Up/Down adjust; padded to the full 21-column slot (cols 12..32) */
-    static const char *ctl_names[] = {"Time | Volts         ", "TrigPos | Offset     ", "TrigPos | Level      "};
+    static const char *ctl_names[] = {"Time | Volts         ", "TrigPos | Offset     ", "TrigPos | Level      ", "Gen Freq | Amp       "};
     static const char *trig_names[] = {"Auto  ", "Normal", "Single"};
     char b[16];
     lcd_fill(0, 0, 12 * 8, 16, C_BLACK);
@@ -89,13 +89,13 @@ void ui_draw_meas(const scope_state_t *s, const meas_t *m) {
 }
 
 void ui_draw_menu(const scope_state_t *s) {
-    static const char *labels[MENU_ITEMS] = {"Coupling", "Probe", "Trigger", "Edge"};
+    static const char *labels[MENU_ITEMS] = {"Coupling", "Probe", "Trigger", "Edge", "Generator"};
     static const char *trig_names[] = {"Auto", "Normal", "Single"};
     const char *vals[MENU_ITEMS] = {
         s->coupling_dc ? "DC" : "AC", s->probe_x10 ? "x10" : "x1",
-        trig_names[s->trig_mode], s->edge ? "Falling" : "Rising",
+        trig_names[s->trig_mode], s->edge ? "Falling" : "Rising", "open >",
     };
-    lcd_fill(8 * 8 - 4, 3 * 16 - 4, 24 * 8 + 8, 7 * 16 + 8, C_NAVY);
+    lcd_fill(8 * 8 - 4, 3 * 16 - 4, 24 * 8 + 8, 8 * 16 + 8, C_NAVY);
     lcd_text(8, 3, " SETTINGS   Mode=close  ", C_BLACK, C_CYAN);
     for (int i = 0; i < MENU_ITEMS; i++) {
         uint16_t bg = i == s->menu_item ? C_GRAY : C_NAVY;
