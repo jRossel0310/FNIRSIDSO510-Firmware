@@ -236,3 +236,23 @@ Probe on the generator output, range 6, generator as signal source.
 - Every armed DMA channel immediately serves one stale request (count 257 -> 256 before the release).
 - ADC clocked at 24 MHz (TMR4 reload 9) with four streams: stream delays inconsistent (-0.9, 0.2, -1.3 clocks).
   24 MS/s should use two streams of the 48 MHz scheme instead.
+
+## Hardware checks for sub-project 1b (2026-11-14)
+
+Scope app, probe on the generator output (50 kHz, 3.0 Vpp), checked over USB frames.
+- All 19 timebases draw (user); 200 ns/div and faster are hard to read on this screen, as expected.
+- 24 MS/s (5 us/div): 2238 frames, both streams aligned in every frame, no spikes.
+- 48 MS/s (2 us/div): stream order 0, 1, 2, 3 in every frame; no whole-sample slips in ~5000 frames.
+- **Misreads on the DMA2 streams (1 and 3):** before the spike filter about 1 frame in 3 had an isolated sample
+  ~20 codes off, always at major code transitions (0x3F/0x40, 0x7F/0x80, 0xBF/0xC0; e.g. 0x40 read as 0x58), only
+  on the two DMA2 streams. Bench (`ilvtest`, DC level parked on a boundary): ~1e-3 of reads wrong on those
+  streams, ~1e-4 on the DMA1 streams. ADC clock phase (TMR4 CH3 compare 1..4): compare 1 improves two boundaries
+  but not mid-scale and has a 20 % duty; compare 4 and inverted polarity break the capture. Kept the stock compare 3.
+  Likely cause: the two DMA controllers contend for the bus on back-to-back reads. `ilv_despike` removes the
+  isolated spikes: 0 in 3190 frames (12 M samples) afterwards.
+- Residual: in ~1 % of 48 MS/s frames stream 1 or 3 reads one ADC clock (20.8 ns) late for part of the frame.
+- 12 MS/s single stream (10 us/div): 1958 frames, no spikes.
+- Logger 100 kS/s started from 2 us/div: no drops, 0 bad CRC; scope returns to 48 MS/s frames afterwards.
+- Top bar: `G` marker now col 29, `USB` cols 31..33, uncalibrated mark is a red `!` at col 35 (user: "looks better").
+- Parked for sub-project 5: trace stretch / trigger jitter at 50 ns/div; auto-set measures frequency only at
+  12 MS/s; baseline settle at the 10/5 us/div calibration boundary.

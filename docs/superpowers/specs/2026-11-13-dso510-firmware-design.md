@@ -1,7 +1,7 @@
 # DSO-510 replacement firmware — design
 
 Date: 2026-11-13
-Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run). Sub-project 3 (function generator) done and verified on hardware 2026-11-13 (amplitude not checked with a meter).
+Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run). Sub-project 3 (function generator) done and verified on hardware 2026-11-13 (amplitude not checked with a meter). Sub-project 1b (interleaved 24/48 MS/s) done and verified on hardware 2026-11-14 (CSV save at 48 MS/s and auto-zero of the fast set not yet confirmed).
 
 ## Goal
 
@@ -423,6 +423,10 @@ Real-time, single-shot sampling above the 12 MS/s a single DMA channel can move.
   overflow at random (measured: about 1-6 % of captures, 28 % in a slow poke-driven test, had that stream one
   sample early). Fix: the slaves use reload preload; the first period is 8 ticks (reload 7, start counts 6, 5, 4, 3
   for streams 0..3), the preloaded reload 3 takes over from the first overflow. Measured: no whole-sample slip.
+- **Spike filter:** the two streams on DMA2 occasionally misread the ADC pins while its output changes (about 1 in
+  1000 samples at the worst code boundaries). After weaving, an isolated sample at least 8 codes away from both
+  neighbours on the same side, with neighbours within 4 codes of each other, is replaced by their mean. A real
+  one-sample (20 ns) pulse of that shape would also be removed.
 - A DMA channel serves one stale request when it is armed. The driver arms one extra sample per stream and reads
   the transfer count before the release to know how many leading samples to skip (0 or 1).
 
