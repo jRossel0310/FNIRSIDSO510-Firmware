@@ -8,6 +8,10 @@ static stream_mode_t mode;
 static uint8_t was_open;
 static sp_line_t line;
 static logger_t lg;
+static uint8_t meta_buf[SP_LOGMETA_LEN];
+static uint8_t meta_pending;
+
+static int port_open(void) { return usbd_cdc_open() && usbd_configured(); }   /* a pulled cable only suspends */
 
 static const char *mode_name(void) { return mode == STREAM_FRAMES ? "frames" : mode == STREAM_LOG ? "log" : "idle"; }
 
@@ -40,7 +44,8 @@ static void command(sp_cmd_t c, uint32_t arg) {
         leave_log();
         mode = STREAM_IDLE;
         logger_init(&lg);
-        if (hk->log_start(arg) < 0) { send_text(SP_ERR, "busy"); break; }
+        meta_pending = 0;
+        if (hk->log_start(arg) < 0) { send_text(SP_ERR, "unsupported rate"); break; }
         mode = STREAM_LOG;
         send_text(SP_OK, line.buf);                  /* echo "LOG <rate>" */
         break;
@@ -50,7 +55,7 @@ static void command(sp_cmd_t c, uint32_t arg) {
 }
 
 void stream_poll(void) {
-    int open = usbd_cdc_open();
+    int open = port_open();
     if (open && !was_open) send_info();
     if (!open && was_open) { leave_log(); mode = STREAM_IDLE; line.n = 0; line.overflow = 0; }
     was_open = (uint8_t)open;
@@ -67,22 +72,29 @@ void stream_poll(void) {
 }
 
 void stream_frame(const uint8_t *rec, int n, const csv_meta_t *m) {
-    if (mode != STREAM_FRAMES || !usbd_cdc_open() || n <= 0 || n > 65535 - (int)SP_FRAME_META - 2) return;
+    if (mode != STREAM_FRAMES || !port_open() || n <= 0 || n > 65535 - (int)SP_FRAME_META - 2) return;
     uint8_t h[SP_FRAME_META + 2];
     uint32_t hl = sp_frame_meta(h, m, (uint16_t)n);
     if (sp_put(usbd_cdc_txfifo(), SP_FRAME, h, hl, rec, (uint32_t)n) == 0) usbd_cdc_kick();   /* else: skipped */
 }
 
+static void try_send_meta(void) {
+    if (!meta_pending) return;
+    if (sp_put(usbd_cdc_txfifo(), SP_LOGMETA, meta_buf, SP_LOGMETA_LEN, 0, 0) == 0) meta_pending = 0;
+    usbd_cdc_kick();
+}
+
 void stream_logmeta(uint32_t rate_hz, uint16_t vdiv_mv, uint8_t probe_x10, uint8_t coupling_dc,
                     int16_t zero_code, uint16_t offset_pwm) {
-    uint8_t p[SP_LOGMETA_LEN];
-    uint32_t k = sp_logmeta(p, rate_hz, vdiv_mv, probe_x10, coupling_dc, zero_code, offset_pwm);
-    sp_put(usbd_cdc_txfifo(), SP_LOGMETA, p, k, 0, 0);   /* small; if it can't fit, the host keeps the old meta */
-    usbd_cdc_kick();
+    sp_logmeta(meta_buf, rate_hz, vdiv_mv, probe_x10, coupling_dc, zero_code, offset_pwm);
+    meta_pending = 1;
+    try_send_meta();
 }
 
 void stream_log(const uint8_t *s, uint32_t n) {
     if (mode != STREAM_LOG) return;
+    try_send_meta();
+    if (meta_pending) { logger_lost(&lg, n); return; }   /* never label samples with a stale scale */
     logger_push(&lg, usbd_cdc_txfifo(), s, n);
     usbd_cdc_kick();
 }

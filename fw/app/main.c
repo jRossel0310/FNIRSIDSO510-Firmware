@@ -19,6 +19,7 @@
 #include "msc.h"
 #include "usbd.h"
 #include "save.h"
+#include <string.h>
 #include "stream.h"
 #include "logger.h"
 
@@ -321,7 +322,8 @@ static void power_down(void) {
     for (;;) WDT_CMD = 0xAAAA;   /* on USB power the scope stays alive; keep the watchdog quiet */
 }
 
-static uint8_t ring[8192];
+static uint8_t ring[16384];
+static uint8_t stage[sizeof ring / 2];   /* stable copy of the half being sent */
 static uint32_t ring_n;                 /* even, <= sizeof ring: halves of ~100 ms */
 static uint32_t ring_consumed;
 static uint32_t log_rate, log_next_ui;
@@ -372,14 +374,17 @@ static void logger_step(void) {
     int halves[2] = {pk.first, pk.second};
     for (int h = 0; h < 2; h++) {
         if (halves[h] < 0) continue;
-        const uint8_t *p = ring + (uint32_t)halves[h] * (ring_n / 2);
-        stream_log(p, ring_n / 2);
-        for (uint32_t i = 0; i < ring_n / 2; i++) {
+        uint32_t hl = ring_n / 2;
+        memcpy(stage, ring + (uint32_t)halves[h] * hl, hl);
+        if (adc_ring_completed() != done) { stream_log_lost(hl); continue; }   /* DMA may have wrapped into it */
+        const uint8_t *p = stage;
+        stream_log(p, hl);
+        for (uint32_t i = 0; i < hl; i++) {
             if (p[i] < log_vmin) log_vmin = p[i];
             if (p[i] > log_vmax) log_vmax = p[i];
             log_sum += p[i];
         }
-        log_cnt += (int)(ring_n / 2);
+        log_cnt += (int)hl;
     }
     kev_t ev[8];
     int ne = keys_update(&ks, keys_read(), millis(), ev, 8);
