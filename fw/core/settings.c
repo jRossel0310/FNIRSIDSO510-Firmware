@@ -77,7 +77,7 @@ int settings_unpack(const uint8_t *in, uint32_t len, scope_state_t *s, cal_t *ca
         for (int r = 0; r < CAL_NRANGES; r++) {
             lo[k][r] = get16(in + OFF_LO + 2 * (k * CAL_NRANGES + r));
             hi[k][r] = get16(in + OFF_HI + 2 * (k * CAL_NRANGES + r));
-            if (lo[k][r] > CAL_PWM_MAX || hi[k][r] > CAL_PWM_MAX) take_cal = 0;
+            if (lo[k][r] > CAL_PWM_MAX || hi[k][r] > CAL_PWM_MAX || lo[k][r] >= hi[k][r]) take_cal = 0;
         }
 
     /* commit */

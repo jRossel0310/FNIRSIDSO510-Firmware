@@ -97,6 +97,18 @@ void test_control_gen(void) {
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_MODE)), CHG_BARS);
     CHECK_EQ(s.ctl, CTL_TIME_VOLT);
 
+    /* quick mode with DC selected: wheel tap and press do nothing */
+    state_defaults(&s); s.ctl = CTL_GEN; s.gen.wave = GEN_DC;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), 0);
+    CHECK_EQ(s.gen.freq_hz, 1000);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), 0);
+    CHECK_EQ(s.gen.fine, 0);
+    s.gen.wave = GEN_SINE;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_GEN | CHG_BARS);
+    CHECK_EQ(s.gen.freq_hz, 2000);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), CHG_BARS);
+    CHECK_EQ(s.gen.fine, 1);
+
     /* menu: fifth item opens the generator page */
     state_defaults(&s);
     control_handle(&s, K(KEV_LONG, KEY_MODE));

@@ -461,6 +461,10 @@ Sub-project 5 is split. 5a (this section) is what needs no new UI decisions. 5b 
 - When: read once at power-on, before USB starts. Written at power-off (after the USB detach), and only if the
   settings differ from what was last read or written, so normal use costs at most one small write per power cycle.
   Settings changed before a battery pull or crash are lost. Not written if a capture save is in progress.
+- The file is rewritten in place (no file-system table rewrite when it already exists), while the screen is still
+  on; the write is skipped when a USB host is attached and using the drive.
+- The settings file and the capture save share one set of FatFs objects (RAM). This is safe because the two never
+  run at the same time.
 - Format (little endian): magic `DSS1`, version 1, flags, timebase in ns and V/div in mV (values, not table
   indices, so later table changes do not corrupt old files), the remaining fields, 2 x 3 x 10 offset-table words,
   CRC-16/CCITT-FALSE over everything before it. A file with a wrong size, magic, version or CRC, or with a

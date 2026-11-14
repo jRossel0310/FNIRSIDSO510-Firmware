@@ -75,6 +75,7 @@ uint32_t control_handle(scope_state_t *s, kev_t ev) {
     int v = k == KEY_UP ? 1 : k == KEY_DOWN ? -1 : 0;
     if (s->ctl == CTL_GEN) {
         gen_cfg_t *g = &s->gen;
+        if (g->wave == GEN_DC && (h || k == KEY_WHEEL_PRESS)) return 0;   /* no frequency on DC */
         if (k == KEY_WHEEL_PRESS && t == KEV_SHORT) { g->fine ^= 1; return CHG_BARS; }
         if (h) {
             uint32_t f = gen_freq_step(g->freq_hz, h, g->fine);

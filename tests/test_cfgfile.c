@@ -33,12 +33,35 @@ void test_cfgfile(void) {
     CHECK(memcmp(got, b, 10) == 0);
     CHECK_EQ(got[10], 0xEE);
 
+    /* in-place rewrite: far fewer erases than the creation */
+    format();
+    fake_flash_erase_reset();
+    CHECK_EQ(cfgfile_save(a, 156), 0);
+    uint32_t e_create = fake_flash_erase_total();
+    fake_flash_erase_reset();
+    CHECK_EQ(cfgfile_save(b, 156), 0);
+    uint32_t e_over = fake_flash_erase_total();
+    printf("cfgfile erases: create %u, overwrite %u\n", (unsigned)e_create, (unsigned)e_over);
+    CHECK(e_over <= 3);
+    CHECK(e_over < e_create);
+    CHECK_EQ(cfgfile_load(got, sizeof got), 156);
+    CHECK(memcmp(got, b, 156) == 0);
+
+    /* shorter blob over a longer file: file is cut; real size is reported */
+    CHECK_EQ(cfgfile_save(a, 100), 0);
+    memset(got, 0, sizeof got);
+    CHECK_EQ(cfgfile_load(got, sizeof got), 100);
+    CHECK(memcmp(got, a, 100) == 0);
+    CHECK_EQ(cfgfile_save(b, 156), 0);                          /* and growing again */
+    CHECK_EQ(cfgfile_load(got, sizeof got), 156);
+    CHECK_EQ(cfgfile_save(a, 100), 0);
+
     static uint8_t rec[100];                                    /* both users of the volume, one after the other */
     csv_meta_t m;
     memset(&m, 0, sizeof m);
     m.rate_hz = 1000000; m.vdiv_mv = 1000; m.coupling_dc = 1; m.zero_code = 128;
     int num = 0;
     CHECK_EQ(capsave_write(rec, 100, &m, &num), CAP_OK);
-    CHECK_EQ(cfgfile_load(got, sizeof got), 156);
-    CHECK(memcmp(got, b, 156) == 0);
+    CHECK_EQ(cfgfile_load(got, sizeof got), 100);
+    CHECK(memcmp(got, a, 100) == 0);
 }

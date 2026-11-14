@@ -125,4 +125,55 @@ void test_settings(void) {
     CHECK_EQ(dst.vdiv, 3); CHECK_EQ(dst.offset, -40);
     CHECK_EQ(cd.lo[0][0], 5); CHECK(cd.lo[1][1] != cs.lo[1][1]);
     CHECK_EQ(z, 0);
+
+    /* 7. degenerate table (lo == hi): tables ignored, rest of the file used */
+    memcpy(t, b, SETTINGS_LEN);
+    t[94 + 2 * 7] = t[34 + 2 * 7]; t[94 + 2 * 7 + 1] = t[34 + 2 * 7 + 1]; fix_crc(t);
+    state_defaults(&dst); cal_defaults(&cd); cd.lo[0][0] = 5; z = 0;
+    CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
+    CHECK_EQ(dst.vdiv, 3); CHECK_EQ(dst.offset, -40);
+    CHECK_EQ(cd.lo[0][0], 5); CHECK(cd.lo[1][1] != cs.lo[1][1]);
+    CHECK_EQ(z, 0);
+
+    /* 8. stability: pack -> unpack -> pack is byte-identical (no flash write at every power-off) */
+    state_defaults(&dst); cal_defaults(&cd); z = 0;
+    CHECK_EQ(settings_unpack(b, SETTINGS_LEN, &dst, &cd, &z), 1);
+    settings_pack(t, &dst, &cd, z);
+    CHECK(memcmp(t, b, SETTINGS_LEN) == 0);
+    {
+        scope_state_t d0; cal_t c0; uint8_t u[SETTINGS_LEN], v[SETTINGS_LEN];
+        state_defaults(&d0); cal_defaults(&c0);
+        settings_pack(u, &d0, &c0, 0);
+        state_defaults(&dst); cal_defaults(&cd); z = 0;
+        CHECK_EQ(settings_unpack(u, SETTINGS_LEN, &dst, &cd, &z), 1);
+        settings_pack(v, &dst, &cd, z);
+        CHECK(memcmp(u, v, SETTINGS_LEN) == 0);
+    }
+
+    /* 9. remaining layout bytes, distinct non-default values */
+    {
+        scope_state_t p; cal_t c; uint8_t o[SETTINGS_LEN];
+        state_defaults(&p); cal_defaults(&c);
+        p.trig_mode = TRIG_SINGLE; p.edge = 1; p.coupling_dc = 1; p.probe_x10 = 1; p.ctl = CTL_GEN;
+        p.gen.on = 1; p.gen.fine = 1; p.gen.duty_pct = 35; p.gen.amp_dv = 14; p.gen.offset_dv = 9;
+        p.gen.freq_hz = 12345;
+        c.lo[0][0] = 0x0123; c.hi[0][0] = 0x0456;
+        settings_pack(o, &p, &c, 1);
+        CHECK_EQ(o[18], TRIG_SINGLE); CHECK_EQ(o[19], 1); CHECK_EQ(o[20], 1); CHECK_EQ(o[21], 1);
+        CHECK_EQ(o[22], CTL_GEN); CHECK_EQ(o[23], 1); CHECK_EQ(o[25], 1);
+        CHECK_EQ(o[26], 35); CHECK_EQ(o[27], 14); CHECK_EQ(o[28], 9);
+        CHECK_EQ(o[30] | (o[31] << 8) | (o[32] << 16) | ((uint32_t)o[33] << 24), 12345);
+        CHECK_EQ(o[34] | (o[35] << 8), 0x0123); CHECK_EQ(o[94] | (o[95] << 8), 0x0456);
+    }
+
+    /* 10. 0/1 normalisation and trig_mode range */
+    memcpy(t, b, SETTINGS_LEN);
+    t[19] = 7; t[20] = 9; t[21] = 2; t[23] = 5; t[25] = 3; t[18] = 2; fix_crc(t);
+    state_defaults(&dst); cal_defaults(&cd); z = 0;
+    CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
+    CHECK_EQ(dst.edge, 1); CHECK_EQ(dst.coupling_dc, 1); CHECK_EQ(dst.probe_x10, 1);
+    CHECK_EQ(dst.gen.on, 1); CHECK_EQ(dst.gen.fine, 1); CHECK_EQ(dst.trig_mode, 2);
+    t[18] = 3; fix_crc(t);
+    CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
+    CHECK_EQ(dst.trig_mode, 0);
 }

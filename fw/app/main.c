@@ -290,6 +290,12 @@ static void do_autoset(void) {
 }
 
 static void power_down(void);
+
+/* Start a front-end settle wait of ms, never shortening one that is already pending. */
+static void settle_for(uint32_t ms) {
+    uint32_t t = millis() + ms;
+    if ((int32_t)(t - settle_until) > 0) settle_until = t;
+}
 static uint32_t pwr_since;
 
 /* Called from long blocking operations: hold Power ~1 s to switch off. */
@@ -360,7 +366,7 @@ static void do_autozero(void) {
     toast(" ZERO done    ", 2000);
 }
 
-/* Store the settings if they changed. Only from power_down(), after the USB detach. */
+/* Store the settings if they changed. Only from power_down(), after the USB detach (and not while a host is using the drive). */
 static void settings_store(void) {
     static uint8_t b[SETTINGS_LEN];
     if (fs_busy) return;                         /* power-off in the middle of a capture save */
@@ -372,10 +378,12 @@ static void settings_store(void) {
 static void power_down(void) {
     gendac_off();                /* no signal on the BNC while the scope is off */
     adc_abort();                 /* stop the logger ring DMA before power-off */
+    /* A host that is using the drive (same test as save_capture) must not be cut off: skip the settings. */
+    int host_busy = usbd_host() && usbd_configured() && msc_busy(&msc, millis());
+    usbd_detach();               /* a host sees an unplug, not a dead drive */
+    if (!host_busy) settings_store();   /* screen still on while the flash is written */
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
     backlight(0);
-    usbd_detach();               /* a host sees an unplug, not a dead drive */
-    settings_store();
     power_off();
     for (;;) WDT_CMD = 0xAAAA;   /* on USB power the scope stays alive; keep the watchdog quiet */
 }
@@ -569,11 +577,13 @@ int main(void) {
         for (int i = 0; i < ne; i++) chg |= control_handle(&st, ev[i]);
 
         if (chg & ACT_POWEROFF) power_down();
-        if (chg & CHG_TIME) { adc_abort(); armed = 0; apply_time(); have_trace = 0;
+        if (chg & CHG_TIME) { adc_abort(); armed = 0;
+                         fe_settle_need = 0;      /* only the offset step of this timebase change counts */
+                         apply_time(); have_trace = 0;
                          uint32_t need = fe_settle_need > FE_SETTLE_MS ? fe_settle_need : FE_SETTLE_MS;
-                         fe_settle_need = 0; settle_until = millis() + need; }
+                         fe_settle_need = 0; settle_for(need); }
         if (chg & CHG_FE) {
-            adc_abort(); armed = 0; apply_fe(); settle_until = millis() + FE_SETTLE_MS;
+            adc_abort(); armed = 0; apply_fe(); settle_for(FE_SETTLE_MS);
             if (st.vdiv != trace_vdiv || st.probe_x10 != trace_x10) have_trace = 0;   /* held Vpp would be mis-scaled */
         }
         if (chg & CHG_RUN) { adc_abort(); armed = 0; }
