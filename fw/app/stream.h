@@ -19,7 +19,9 @@ void stream_frame(const uint8_t *rec, int n, const csv_meta_t *m);
 /* Logger: settings packet (at start and whenever V/div or offset change). */
 void stream_logmeta(uint32_t rate_hz, uint16_t vdiv_mv, uint8_t probe_x10, uint8_t coupling_dc,
                     int16_t zero_code, uint16_t offset_pwm);
-void stream_log(const uint8_t *s, uint32_t n);
+/* Logger: queue as many whole LOG chunks of s[0..n) as fit now (after any waiting reply and LOGMETA).
+   Returns the samples taken; the caller keeps the rest for the next pass or reports it lost. */
+uint32_t stream_log_fit(const uint8_t *s, uint32_t n);
 void stream_log_lost(uint32_t n);
 /* Leave logger mode from the scope side (Run key): hook log_stop, mode idle, INFO to the host. */
 void stream_stop_log(void);
