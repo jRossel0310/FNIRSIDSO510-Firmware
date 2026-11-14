@@ -1,7 +1,7 @@
 # DSO-510 replacement firmware — design
 
 Date: 2026-11-13
-Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run). Sub-project 3 (function generator) done and verified on hardware 2026-11-13 (amplitude not checked with a meter). Sub-project 1b (interleaved 24/48 MS/s) done and verified on hardware 2026-11-14.
+Status: approved. Sub-project 1 (core scope) done and verified on hardware 2026-11-13 (merge 0c3fc14). Sub-project 2 (storage, CSV, USB drive) done and verified on hardware 2026-11-13 (stock-compat and Windows checks not run). Sub-project 4 (live USB streaming + Python plotter) done and verified on hardware 2026-11-13 (long soak, replug/save-during-stream and Windows/macOS checks not run). Sub-project 3 (function generator) done and verified on hardware 2026-11-13 (amplitude not checked with a meter). Sub-project 1b (interleaved 24/48 MS/s) done and verified on hardware 2026-11-14. Sub-project 5a (settings persistence, generator DC level, settle fix) done and verified on hardware 2026-11-14.
 
 ## Goal
 

@@ -258,3 +258,12 @@ Scope app, probe on the generator output (50 kHz, 3.0 Vpp), checked over USB fra
   12 MS/s; baseline settle at the 10/5 us/div calibration boundary.
 - User checks (reported "all three have passed"): CSV save at 2 us/div, auto-zero with the fast calibration set
   ("ZERO done"), frequency reading with 50 kHz at 5 us/div.
+
+## Hardware checks for sub-project 5a (2026-11-14)
+
+- User ran the five checks and reported all passed: settings (scope + generator) and the auto-zero result survive
+  a key power-off; generator DC level separate from the wave offset; timebase stepping (incl. 10 <-> 5 us/div)
+  without long freezes; CSV save and drive fine; `DSO510.CFG` (156 bytes) on the drive.
+- Host measurement on the fake flash: rewriting the settings file in place costs 2 sector erases (data + root
+  directory); the first version (`FA_CREATE_ALWAYS`) cost 7 including both FAT copies twice.
+- Parked: saved auto-zero tables override the factory calibration even if the factory page later changes.
