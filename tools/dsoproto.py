@@ -10,6 +10,11 @@ INFO, FRAME, LOGMETA, LOG, DROP, OK, ERR = range(1, 8)
 SYNC = b"\xa5\x5a"
 
 
+# Longest payload the firmware sends per type. A longer length is a false sync, rejected at once
+# instead of waiting for up to 64 KB before the CRC could reject it.
+MAX_LEN = {INFO: 512, FRAME: 23 + 8192, LOGMETA: 12, LOG: 4 + 1024, DROP: 8, OK: 64, ERR: 64}
+
+
 def crc16(data, crc=0xFFFF):
     for b in data:
         crc ^= b << 8
@@ -130,8 +135,8 @@ class Decoder:
                 return out
             ptype = self.buf[2]
             n = self.buf[3] | self.buf[4] << 8
-            if not INFO <= ptype <= ERR:
-                del self.buf[:1]                    # false sync: not a packet type, skip one byte
+            if not INFO <= ptype <= ERR or n > MAX_LEN[ptype]:
+                del self.buf[:1]                    # false sync: not a packet type, or too long for it
                 continue
             if len(self.buf) < 5 + n + 2:
                 return out

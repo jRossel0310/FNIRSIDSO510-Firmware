@@ -26,7 +26,7 @@ def find_port():
 
 def _serial_opener(port):
     import serial
-    return serial.Serial(port, 115200, timeout=0.05)
+    return serial.Serial(port, 115200, timeout=0.05, write_timeout=1)   # a stalled port must not block
 
 
 class ScopeClient:
@@ -40,6 +40,8 @@ class ScopeClient:
         self.mode = None                # None, "frames" or "log"; set with rate under _lock
         self.rate = None
         self._port = None
+        self._dec = None                # decoder of the current connection
+        self._drop = threading.Event()  # a write failed or timed out: reconnect
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._run, daemon=True)
@@ -59,8 +61,19 @@ class ScopeClient:
             if self._port is not None:
                 try:
                     self._port.write(data)
-                except OSError:
-                    pass
+                except DISCONNECT_ERRORS:   # incl. pyserial's write timeout: the port is stuck
+                    self._drop.set()        # the reader closes it and reconnects
+
+    @property
+    def bad_crc(self):
+        """Packets rejected by CRC on this connection (non-zero hints at a second reader on the port)."""
+        d = self._dec
+        return d.bad_crc if d else 0
+
+    @property
+    def bad_payload(self):
+        d = self._dec
+        return d.bad_payload if d else 0
 
     def start(self, mode, rate=None):
         with self._lock:
@@ -112,6 +125,8 @@ class ScopeClient:
                 self.last_error = "open failed: %s: %s" % (type(e).__name__, e)
                 return
             dec = dsoproto.Decoder()
+            self._dec = dec
+            self._drop.clear()
             with self._lock:
                 self._port = p
             self.connected = True
@@ -120,7 +135,7 @@ class ScopeClient:
                 self._send(cmd)                 # resume the previous mode
             fatal = None
             try:
-                while not self._stop.is_set():
+                while not self._stop.is_set() and not self._drop.is_set():
                     data = p.read(4096)
                     if data:
                         for pk in dec.feed(data):

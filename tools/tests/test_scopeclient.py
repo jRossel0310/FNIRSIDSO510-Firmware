@@ -74,6 +74,45 @@ class TestClient(unittest.TestCase):
         self.assertIn(b"LOG 100000\n", opened[1].written)   # resumed after the reconnect
 
 
+    def test_write_timeout_reconnects(self):
+        class StuckPort(FakePort):
+            def write(self, b):
+                raise OSError("Write timeout")     # pyserial's SerialTimeoutException is an OSError
+
+        ports = [StuckPort([]), FakePort([])]
+        opened = []
+
+        def opener(p):
+            if not ports:
+                raise OSError("no device")
+            opened.append(ports[0])
+            return ports.pop(0)
+
+        c = scopeclient.ScopeClient(port="fake", opener=opener, retry_s=0.05)
+        deadline = time.time() + 2
+        while not c.connected and time.time() < deadline:
+            time.sleep(0.01)
+        c.start("frames")                         # times out on the stuck port: treated as a disconnect
+        deadline = time.time() + 3
+        while len(opened) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.2)
+        c.close()
+        self.assertEqual(len(opened), 2)
+        self.assertTrue(opened[0].closed)
+        self.assertIn(b"FRAMES\n", opened[1].written)   # resumed on the new connection
+
+    def test_bad_crc_counter_exposed(self):
+        with open(os.path.join(VEC, "stream.bin"), "rb") as f:
+            data = f.read()
+        port = FakePort([data])
+        c = scopeclient.ScopeClient(port="fake", opener=lambda p: port)
+        deadline = time.time() + 2
+        while c.bad_crc == 0 and time.time() < deadline:
+            time.sleep(0.01)
+        c.close()
+        self.assertEqual(c.bad_crc, 1)              # stream.bin holds one corrupted LOG
+
     def test_missing_pyserial_stops_retrying(self):
         calls = []
 

@@ -18,6 +18,18 @@ Add yourself once, then log out and back in:
 sudo usermod -aG dialout "$USER"
 ```
 
+Alternatively, a udev rule gives the logged-in user access without the group,
+and tells ModemManager to leave the port alone (otherwise it may open the port
+to probe for a modem, and two programs reading the port garble the data).
+Put this line in `/etc/udev/rules.d/70-dso510.rules`:
+
+```
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e3c", ATTRS{idProduct}=="5720", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+Then run `sudo udevadm control --reload` and replug the scope. If the status
+line shows a growing `bad crc` count, another program is reading the port.
+
 ## Run the live viewer
 
 ```sh
@@ -36,7 +48,9 @@ it waits, and the last start command is re-sent once the scope returns.
 - **Logger** shows a rolling window (set by *Window*, up to 60 s) of the
   continuous sample stream at the chosen *Logger rate*. The status line shows
   the sample count, the measured S/s and the number of dropped samples. A drop
-  appears as a gap in the trace. Long windows are decimated to min/max pairs
+  appears as a gap in the trace. A V/div change on the scope while logging
+  also leaves a short gap (a fraction of a second while the front end settles), so no
+  sample is ever shown with the wrong scale. Long windows are decimated to min/max pairs
   so the display stays responsive at 500 kS/s.
 
 *Mode* and *Logger rate* are locked while running; *Window* can change live.

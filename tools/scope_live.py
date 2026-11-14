@@ -300,14 +300,16 @@ class Window(QtWidgets.QWidget):
         if self.c.last_error:                       # reader thread has stopped for good
             self.status.setText("client stopped: %s" % self.c.last_error)
         elif not self.running:
-            self.status.setText("stopped · fw %s" % self.fw)
+            self.status.setText("stopped · bad crc %d · fw %s" % (self.c.bad_crc, self.fw))
         elif self.run_mode == "Frames":
-            self.status.setText("%s · %.1f frames/s · fw %s" % (conn_txt, self.stats["frames"] / dt, self.fw))
+            self.status.setText("%s · %.1f frames/s · bad crc %d · fw %s" % (
+                conn_txt, self.stats["frames"] / dt, self.c.bad_crc, self.fw))
         else:
             eff = self.effective_window()
             cap = (" · window %.1f s (capped)" % eff) if eff < self.window_s.value() - 1e-9 else ""
-            self.status.setText("%s · %d samples (%.0f S/s) · dropped %d · fw %s%s" % (
-                conn_txt, self.stats["samples"], self.stats["samples"] / dt, self.stats["drops"], self.fw, cap))
+            self.status.setText("%s · %d samples (%.0f S/s) · dropped %d · bad crc %d · fw %s%s" % (
+                conn_txt, self.stats["samples"], self.stats["samples"] / dt, self.stats["drops"],
+                self.c.bad_crc, self.fw, cap))
 
     def closeEvent(self, e):
         self.close_log()

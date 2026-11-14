@@ -114,6 +114,24 @@ class TestFaults(unittest.TestCase):
         self.assertEqual([type(p).__name__ for p in pk], ["Ok"])
         self.assertEqual(d.bad_crc, 0)
 
+    def test_over_long_length_is_false_sync(self):
+        # a valid type with a length beyond that type's maximum must not stall the decoder
+        for ptype, n in ((dp.LOG, 4 + 1025), (dp.LOGMETA, 13), (dp.DROP, 9), (dp.OK, 65), (dp.ERR, 65),
+                         (dp.INFO, 513), (dp.FRAME, 23 + 8193), (dp.LOG, 0xFFFF)):
+            d = dp.Decoder()
+            junk = dp.SYNC + bytes([ptype]) + struct.pack("<H", n)
+            pk = d.feed(junk + pkt(dp.OK, b"OK"))
+            self.assertEqual([type(p).__name__ for p in pk], ["Ok"], (ptype, n))
+            self.assertEqual(d.bad_crc, 0)
+
+    def test_longest_valid_lengths_pass(self):
+        d = dp.Decoder()
+        log = pkt(dp.LOG, struct.pack("<I", 7) + bytes(1024))
+        meta = pkt(dp.LOGMETA, struct.pack("<IHBBhH", 1000, 500, 0, 1, 128, 1630))
+        drop = pkt(dp.DROP, struct.pack("<II", 10, 5))
+        pk = d.feed(log + meta + drop + pkt(dp.OK, b"x" * 64))
+        self.assertEqual([type(p).__name__ for p in pk], ["Log", "LogMeta", "Drop", "Ok"])
+
 
 class TestCsv(unittest.TestCase):
     def test_drop_before_meta_writes_nothing(self):
