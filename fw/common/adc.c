@@ -24,7 +24,9 @@
 static volatile int busy;
 static volatile uint32_t ring_done;
 
+static uint8_t ilv_mode, ilv_busy;   /* interleave state, see below */
 void adc_init(void) {
+    ilv_mode = 0; ilv_busy = 0;      // TMR4 is reprogrammed below: not in interleave mode any more
     CRM_AHBEN |= 1u << 0;            // DMA1
     CRM_APB1EN |= 1u << 2;           // TMR4
     for (int p = 0; p < 8; p++) gpio_mode(GPIOB, p, CFG_IN_FLOAT);
@@ -126,6 +128,7 @@ void adc_ilv_start(uint8_t *raw, uint16_t per, int streams) {
         ilv_hw[j] = (uint8_t)k;
         TMR_CTRL1(t) = 0x80u;                                /* reload preload on, stopped */
         TMR_DIV(t) = 0;
+        REG32(t + 0x30) = 0;                                 /* repetition counter (TMR1/TMR8): every overflow counts */
         TMR_PR(t) = 7;                                       /* first period: 8 ticks */
         TMR_SWEVT(t) = 1;                                    /* load it */
         TMR_PR(t) = 3;                                       /* from the first overflow on: 4 ticks = 12 MHz */

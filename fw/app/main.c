@@ -30,6 +30,7 @@
 
 static uint8_t recbuf[2][REC_MAX];
 static uint8_t ilv_raw[4 * (REC_MAX / 4 + ADC_ILV_PAD)];   /* per-stream buffers of an interleaved capture */
+_Static_assert(REC_MAX % 4 == 0, "an interleaved record splits evenly over 4 streams");
 static uint8_t *rec = recbuf[0];        /* buffer being captured into */
 static uint8_t *shown;                  /* last processed capture (on screen) */
 static int shown_n;
@@ -115,8 +116,12 @@ static uint32_t capture_timeout_ms(void) { return (uint32_t)((uint64_t)rec_n * 1
 
 /* Arm one capture of rec_n samples into rec. */
 static void cap_start(void) {
-    if (rc.streams > 1) adc_ilv_start(ilv_raw, (uint16_t)(rec_n / rc.streams), rc.streams);
-    else adc_start(rec, (uint16_t)rec_n);
+    if (rc.streams > 1) {
+        adc_ilv_start(ilv_raw, (uint16_t)(rec_n / rc.streams), rc.streams);
+        /* An interleaved capture lasts at most ~100 us and each ADC value is on the pins for only 5 CPU
+           clocks: wait for it here, so no other bus traffic from the main loop can delay a DMA read. */
+        for (uint32_t spin = 0; spin < 200000u && !adc_ilv_done(); spin++) { }
+    } else adc_start(rec, (uint16_t)rec_n);
 }
 
 /* 1 once the armed capture is complete and rec holds the record. */
