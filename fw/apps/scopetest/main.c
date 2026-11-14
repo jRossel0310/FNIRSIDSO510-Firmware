@@ -40,6 +40,7 @@ static int to_y(uint8_t v) { return PLOT_H - 1 - (v * (PLOT_H - 1)) / 255; }
 
 static void apply_rate(void) {
     rate_cfg_t r = units_rate_for_tdiv(tdiv_ns[tdiv]);
+    if (r.streams > 1) return;          /* interleaved rates need adc_ilv_*; this app is single-stream */
     adc_set_rate(r.psc, r.arr);
 }
 
@@ -83,7 +84,10 @@ int main(void) {
         if (press & KEY_BIT(KEY_WHEEL_L) && range > 0) { range--; changed = 1; }
         if (k & KEY_BIT(KEY_UP))   { offset = offset + 16 > FE_PWM_MAX ? FE_PWM_MAX : offset + 16; changed = 1; }
         if (k & KEY_BIT(KEY_DOWN)) { offset = offset < 16 ? 0 : offset - 16; changed = 1; }
-        if (press & KEY_BIT(KEY_RUN)) { tdiv = (tdiv + 1) % NUM_TDIV; apply_rate(); changed = 1; }
+        if (press & KEY_BIT(KEY_RUN)) {
+            do tdiv = (tdiv + 1) % NUM_TDIV; while (units_rate_for_tdiv(tdiv_ns[tdiv]).streams > 1);
+            apply_rate(); changed = 1;
+        }
         if (press & KEY_BIT(KEY_MODE)) { dc ^= 1; changed = 1; }
         if (press & KEY_BIT(KEY_AUTO)) { frozen ^= 1; changed = 1; }
         if (press & KEY_BIT(KEY_WHEEL_PRESS)) { gen = (gen + 1) % NUM_GEN; gen_set_arr(gen_freqs[gen].arr); changed = 1; }

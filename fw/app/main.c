@@ -24,10 +24,12 @@
 #include "logger.h"
 #include "gen.h"
 #include "gendac.h"
+#include "ilv.h"
 
 #define REC_MAX (4 * 1200)
 
 static uint8_t recbuf[2][REC_MAX];
+static uint8_t ilv_raw[4 * (REC_MAX / 4 + ADC_ILV_PAD)];   /* per-stream buffers of an interleaved capture */
 static uint8_t *rec = recbuf[0];        /* buffer being captured into */
 static uint8_t *shown;                  /* last processed capture (on screen) */
 static int shown_n;
@@ -91,7 +93,7 @@ static void apply_fe(void) {
 
 static void set_time(int tdiv) {
     rc = units_rate_for_tdiv(tdiv_ns[tdiv]);
-    adc_set_rate(rc.psc, rc.arr);
+    if (rc.streams > 1) adc_ilv_enter(); else adc_set_rate(rc.psc, rc.arr);
     sps = units_samples_per_screen(rc.rate_hz, tdiv_ns[tdiv]);
     rec_n = (int)(4 * sps);
     if (rec_n > REC_MAX) rec_n = REC_MAX;
@@ -111,10 +113,26 @@ static void fe_settle(void) {
 /* Expected capture time plus 1 s margin. */
 static uint32_t capture_timeout_ms(void) { return (uint32_t)((uint64_t)rec_n * 1000u / rc.rate_hz) + 1000u; }
 
+/* Arm one capture of rec_n samples into rec. */
+static void cap_start(void) {
+    if (rc.streams > 1) adc_ilv_start(ilv_raw, (uint16_t)(rec_n / rc.streams), rc.streams);
+    else adc_start(rec, (uint16_t)rec_n);
+}
+
+/* 1 once the armed capture is complete and rec holds the record. */
+static int cap_done(void) {
+    if (rc.streams == 1) return adc_done();
+    if (!adc_ilv_done()) return 0;
+    const uint8_t *src[4];
+    for (int k = 0; k < rc.streams; k++) src[k] = adc_ilv_stream(k);
+    ilv_weave(rec, src, rc.streams, (uint32_t)(rec_n / rc.streams));
+    return 1;
+}
+
 static int capture_blocking(void) {
-    adc_start(rec, (uint16_t)rec_n);
+    cap_start();
     uint32_t t0 = millis(), lim = capture_timeout_ms();
-    while (!adc_done()) {
+    while (!cap_done()) {
         WDT_CMD = 0xAAAA;
         board_idle();
         if (millis() - t0 > lim) { adc_abort(); toast(" ADC timeout  ", 2000); return -1; }
@@ -291,15 +309,15 @@ static int mean_x16_at_pwm(uint16_t pwm, int span) {
 }
 
 static void do_autozero(void) {
-    static const struct { uint8_t set, tdiv; } plan[2] = {
-        { CAL_SET_SLOW, TDIV_1MS }, { CAL_SET_MID, TDIV_10US },
+    static const struct { uint8_t set, tdiv; } plan[3] = {
+        { CAL_SET_SLOW, TDIV_1MS }, { CAL_SET_MID, TDIV_10US }, { CAL_SET_FAST, TDIV_2US },
     };
     toast(" ZERO: short! ", 60000);
     adc_abort(); armed = 0;
     wait_power_aware(2000);
     zero_failed = 0;
     cal_t tmp = cal;                            /* shifts are committed only if every range succeeds */
-    for (int p = 0; p < 2; p++) {
+    for (int p = 0; p < 3; p++) {
         set_time(plan[p].tdiv);
         for (int r = 0; r < NUM_VDIV; r++) {
             char b[4];
@@ -551,10 +569,10 @@ int main(void) {
         if (st.run && !st.menu_open && !st.gen_open) {
             if (!armed) {
                 if ((int32_t)(millis() - settle_until) >= 0) {   /* not while the front end settles */
-                    adc_start(rec, (uint16_t)rec_n); armed = 1; armed_at = millis();
+                    cap_start(); armed = 1; armed_at = millis();
                 }
             }
-            else if (adc_done()) { armed = 0; process_capture(); }
+            else if (cap_done()) { armed = 0; process_capture(); }
             else if (millis() - armed_at > capture_timeout_ms()) {
                 adc_abort(); armed = 0; toast(" ADC timeout  ", 2000);
             }
