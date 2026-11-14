@@ -237,7 +237,7 @@ Approved in conversation 2026-11-13. Hardware facts: `NOTES.md` § SPI NOR flash
   bus reset, EP0 (incl. SET_ADDRESS right after its status stage) and EP1 packets are handled in the
   ISR; 4 KiB block reads/writes run in main context. Exposes the 5 MiB user volume only, as 1280 × 4096-byte blocks (as stock),
   removable (RMB=1). Own VID:PID strings are not required; reuse stock `2e3c:5720`.
-- **Auto-mount:** the device is always enabled with the D+ pull-up on. A computer enumerates it; a
+- **Auto-mount:** the device is enabled with the D+ pull-up on except during a save's soft-disconnect and at power-off. A computer enumerates it; a
   charger never does, so nothing happens there. The scope keeps running normally while connected.
 - **Ownership while connected:** the host owns the volume (read/write). The scope's FatFs volume is
   unmounted while the host is attached.

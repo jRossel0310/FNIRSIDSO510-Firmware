@@ -10,7 +10,14 @@
 
 static int spi_err;
 
-static void cs(int level) { if (level) GPIO_SCR(GPIOD) = 1u << CS_PIN; else GPIO_CLR(GPIOD) = 1u << CS_PIN; }
+static void cs(int level) {
+    if (!level) { GPIO_CLR(GPIOD) = 1u << CS_PIN; return; }
+    /* NOR tCSH: CS may rise only after the last bit has clocked out, and must then stay high long enough (~250 ns) */
+    uint32_t n = 100000;
+    while (SPI3_STS & 0x80u) if (!--n) { spi_err = 1; break; }   /* BSY */
+    GPIO_SCR(GPIOD) = 1u << CS_PIN;
+    for (volatile int i = 0; i < 60; i++) { }
+}
 
 static uint8_t xfer(uint8_t b) {
     uint32_t n = 100000;

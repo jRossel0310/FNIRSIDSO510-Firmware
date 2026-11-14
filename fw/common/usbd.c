@@ -36,7 +36,7 @@
 #define EP1_TX 0x100u
 #define RX64   0x8400u                          /* COUNT_RX: BL_SIZE=1, NUM_BLOCK=1 -> 64 bytes */
 
-#define CNTR_IRQS  0xBE00u                         /* CTRM WKUPM SUSPM RESETM SOFM */
+#define CNTR_IRQS  0x9E00u                         /* CTRM WKUPM SUSPM RESETM SOFM */
 #define USB_IRQ_BIT (1u << 20)                      /* IRQ20: USBFS low priority, NVIC ISER0/ICER0 */
 
 /* Everything below except `busy`, `lock_depth`, `irq_on` and `detached` is owned by the ISR; main
@@ -279,7 +279,9 @@ int usbd_host(void) {
 }
 
 int usbd_configured(void) {
-    return usbd_host() && !suspended && (millis() - last_sof) < 1000u;
+    if (!usbd_host() || suspended) return 0;
+    uint32_t ls = last_sof;                 /* load before millis(): SOF is updated in the ISR */
+    return (millis() - ls) < 1000u;
 }
 
 uint32_t usbd_last_sof_ms(void) { return last_sof; }

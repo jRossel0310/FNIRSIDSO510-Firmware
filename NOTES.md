@@ -171,3 +171,6 @@ Other:
   - 0x000000: 0x500 sectors = **5 MiB user volume** (stock `2:`, the USB drive)
   - 0x500000: 0x300 sectors = **3 MiB hidden system volume** (stock `3:`, UI graphics) — must never be written
     by our firmware, so recovery to stock keeps working.
+- Hardware result (2026-11-13): status registers SR1=00, SR2=00, SR3=20 (no block protection). A sector write
+  (erase+program+verify) takes about 31 ms. CS timing is mandatory: CS must rise only after SPI3 BSY is clear
+  (last bit fully clocked) and stay high >= ~250 ns; without that the chip ignored every erase and program.
