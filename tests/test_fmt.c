@@ -15,4 +15,7 @@ void test_fmt(void) {
     CHECK_STR(fmt_si(b, 10.0f, "V", 1), "10V");
     CHECK_STR(fmt_si(b, 0.01f, "V", 1), "10mV");
     CHECK_STR(fmt_si(b, 100.0f, "V", 1), "100V");
+    CHECK_STR(fmt_si(b, 300e-6f, "s", 0), "300us");
+    CHECK_STR(fmt_si(b, 1.5e-6f, "s", 0), "1.50us");
+    CHECK_STR(fmt_si(b, 1.5e-6f, "s", 1), "1.5us");
 }

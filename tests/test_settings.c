@@ -3,9 +3,10 @@
 #include "stream_proto.h"
 #include <stdint.h>
 
-static void fix_crc(uint8_t *b) {
-    uint16_t c = sp_crc16(0xFFFF, b, SETTINGS_LEN - 2);
-    b[SETTINGS_LEN - 2] = (uint8_t)c; b[SETTINGS_LEN - 1] = (uint8_t)(c >> 8);
+/* CRC over b[0..off-1], stored at b[off], b[off+1] */
+static void fix_crc(uint8_t *b, uint32_t off) {
+    uint16_t c = sp_crc16(0xFFFF, b, off);
+    b[off] = (uint8_t)c; b[off + 1] = (uint8_t)(c >> 8);
 }
 
 static int tdiv_index(uint32_t ns) {
@@ -20,6 +21,7 @@ static void make_state(scope_state_t *s) {
     s->edge = 1; s->coupling_dc = 0; s->probe_x10 = 1; s->ctl = CTL_GEN;
     s->gen.on = 0; s->gen.wave = GEN_SQUARE; s->gen.freq_hz = 12300; s->gen.amp_dv = 10;
     s->gen.offset_dv = 12; s->gen.dc_dv = 7; s->gen.duty_pct = 30; s->gen.fine = 1;
+    s->meas_sel[0] = MEAS_RMS; s->meas_sel[1] = MEAS_PERIOD; s->meas_sel[2] = MEAS_MIN; s->auto_off = 3;
 }
 
 static void make_cal(cal_t *c) {
@@ -63,6 +65,8 @@ void test_settings(void) {
     CHECK_EQ(dst.gen.duty_pct, 30); CHECK_EQ(dst.gen.amp_dv, 10);
     CHECK_EQ(dst.gen.offset_dv, 12); CHECK_EQ(dst.gen.dc_dv, 7);
     CHECK_EQ(dst.gen.freq_hz, 12300);
+    CHECK_EQ(dst.meas_sel[0], MEAS_RMS); CHECK_EQ(dst.meas_sel[1], MEAS_PERIOD); CHECK_EQ(dst.meas_sel[2], MEAS_MIN);
+    CHECK_EQ(dst.auto_off, 3);
     CHECK(memcmp(cd.lo, cs.lo, sizeof cs.lo) == 0);
     CHECK(memcmp(cd.hi, cs.hi, sizeof cs.hi) == 0);
     CHECK_EQ(z, 1);
@@ -72,12 +76,13 @@ void test_settings(void) {
 
     /* 2. layout pins */
     CHECK(b[0] == 'D' && b[1] == 'S' && b[2] == 'S' && b[3] == '1');
-    CHECK_EQ(b[4], 1); CHECK_EQ(b[5] & 1, 1);
+    CHECK_EQ(b[4], 2); CHECK_EQ(b[5] & 1, 1);
     CHECK_EQ(b[6] | (b[7] << 8) | (b[8] << 16) | ((uint32_t)b[9] << 24), 2000);
     CHECK_EQ(b[10] | (b[11] << 8), vdiv_mv[3]);
     CHECK_EQ(b[29], 7);
     CHECK_EQ(b[34], 100); CHECK_EQ(b[94] | (b[95] << 8), 2000);
-    CHECK_EQ(b[154] | (b[155] << 8), sp_crc16(0xFFFF, b, 154));
+    CHECK_EQ(b[154], MEAS_RMS); CHECK_EQ(b[155], MEAS_PERIOD); CHECK_EQ(b[156], MEAS_MIN); CHECK_EQ(b[157], 3);
+    CHECK_EQ(b[158] | (b[159] << 8), sp_crc16(0xFFFF, b, 158));
 
     /* 3. zeroed = 0 */
     settings_pack(t, &src, &cs, 0);
@@ -94,13 +99,26 @@ void test_settings(void) {
     expect_reject(b, SETTINGS_LEN - 1);
     memcpy(t, b, SETTINGS_LEN); t[SETTINGS_LEN] = 0;
     expect_reject(t, SETTINGS_LEN + 1);
-    memcpy(t, b, SETTINGS_LEN); t[0] = 'X'; fix_crc(t); expect_reject(t, SETTINGS_LEN);
-    memcpy(t, b, SETTINGS_LEN); t[4] = 2; fix_crc(t); expect_reject(t, SETTINGS_LEN);
+    memcpy(t, b, SETTINGS_LEN); t[0] = 'X'; fix_crc(t, 158); expect_reject(t, SETTINGS_LEN);
+    memcpy(t, b, SETTINGS_LEN); t[4] = 3; fix_crc(t, 158); expect_reject(t, SETTINGS_LEN);
     memcpy(t, b, SETTINGS_LEN); t[12] ^= 0x10; expect_reject(t, SETTINGS_LEN);
-    memcpy(t, b, SETTINGS_LEN); t[6] = 123; t[7] = t[8] = t[9] = 0; fix_crc(t);
+    memcpy(t, b, SETTINGS_LEN); t[6] = 123; t[7] = t[8] = t[9] = 0; fix_crc(t, 158);
     expect_reject(t, SETTINGS_LEN);
-    memcpy(t, b, SETTINGS_LEN); t[10] = 7; t[11] = 0; fix_crc(t);
+    memcpy(t, b, SETTINGS_LEN); t[10] = 7; t[11] = 0; fix_crc(t, 158);
     expect_reject(t, SETTINGS_LEN);
+
+    memcpy(t, b, SETTINGS_LEN); t[4] = 1; fix_crc(t, 158); expect_reject(t, SETTINGS_LEN);   /* 160 bytes, version 1 */
+    memcpy(t, b, 156); fix_crc(t, 154); expect_reject(t, 156);                              /* 156 bytes, version 2 */
+    memcpy(t, b, SETTINGS_LEN); expect_reject(t, 158);
+
+    /* 4b. version 1 file still read; meas_sel / auto_off untouched */
+    memcpy(t, b, 156); t[4] = 1; fix_crc(t, 154);
+    state_defaults(&dst); cal_defaults(&cd); z = 0;
+    dst.meas_sel[0] = MEAS_AVG; dst.meas_sel[1] = MEAS_AVG; dst.meas_sel[2] = MEAS_AVG; dst.auto_off = 1;
+    CHECK_EQ(settings_unpack(t, 156, &dst, &cd, &z), 1);
+    CHECK_EQ(dst.vdiv, 3); CHECK_EQ(dst.offset, -40); CHECK_EQ(dst.gen.freq_hz, 12300); CHECK_EQ(z, 1);
+    CHECK_EQ(dst.meas_sel[0], MEAS_AVG); CHECK_EQ(dst.meas_sel[1], MEAS_AVG); CHECK_EQ(dst.meas_sel[2], MEAS_AVG);
+    CHECK_EQ(dst.auto_off, 1);
 
     /* 5. clamping */
     memcpy(t, b, SETTINGS_LEN);
@@ -110,16 +128,21 @@ void test_settings(void) {
     t[18] = 9; t[22] = 77; t[24] = 200;
     t[30] = 0x3F; t[31] = 0x42; t[32] = 0x0F; t[33] = 0; /* 999999 */
     t[27] = 99;
-    fix_crc(t);
+    fix_crc(t, 158);
     state_defaults(&dst);
     CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
     CHECK_EQ(dst.offset, 100); CHECK_EQ(dst.trig_level, 0);
     CHECK_EQ(dst.trig_pos, PLOT_COLS - 1); CHECK_EQ(dst.trig_mode, 0);
     CHECK_EQ(dst.ctl, 0); CHECK_EQ(dst.gen.wave, GEN_SINE);
     CHECK_EQ(dst.gen.freq_hz, 50000); CHECK_EQ(dst.gen.amp_dv, 30);
+    memcpy(t, b, SETTINGS_LEN); t[155] = 200; t[157] = 9; fix_crc(t, 158);
+    state_defaults(&dst); dst.meas_sel[1] = MEAS_AVG; dst.auto_off = 0;
+    CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
+    CHECK_EQ(dst.meas_sel[0], MEAS_RMS); CHECK_EQ(dst.meas_sel[1], MEAS_DUTY_P); CHECK_EQ(dst.meas_sel[2], MEAS_MIN);
+    CHECK_EQ(dst.auto_off, 2);
 
     /* 6. bad zero table */
-    memcpy(t, b, SETTINGS_LEN); t[94 + 2 * 7] = 0x00; t[94 + 2 * 7 + 1] = 0x10; fix_crc(t);
+    memcpy(t, b, SETTINGS_LEN); t[94 + 2 * 7] = 0x00; t[94 + 2 * 7 + 1] = 0x10; fix_crc(t, 158);
     state_defaults(&dst); cal_defaults(&cd); cd.lo[0][0] = 5; z = 0;
     CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
     CHECK_EQ(dst.vdiv, 3); CHECK_EQ(dst.offset, -40);
@@ -128,7 +151,7 @@ void test_settings(void) {
 
     /* 7. degenerate table (lo == hi): tables ignored, rest of the file used */
     memcpy(t, b, SETTINGS_LEN);
-    t[94 + 2 * 7] = t[34 + 2 * 7]; t[94 + 2 * 7 + 1] = t[34 + 2 * 7 + 1]; fix_crc(t);
+    t[94 + 2 * 7] = t[34 + 2 * 7]; t[94 + 2 * 7 + 1] = t[34 + 2 * 7 + 1]; fix_crc(t, 158);
     state_defaults(&dst); cal_defaults(&cd); cd.lo[0][0] = 5; z = 0;
     CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
     CHECK_EQ(dst.vdiv, 3); CHECK_EQ(dst.offset, -40);
@@ -168,12 +191,12 @@ void test_settings(void) {
 
     /* 10. 0/1 normalisation and trig_mode range */
     memcpy(t, b, SETTINGS_LEN);
-    t[19] = 7; t[20] = 9; t[21] = 2; t[23] = 5; t[25] = 3; t[18] = 2; fix_crc(t);
+    t[19] = 7; t[20] = 9; t[21] = 2; t[23] = 5; t[25] = 3; t[18] = 2; fix_crc(t, 158);
     state_defaults(&dst); cal_defaults(&cd); z = 0;
     CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
     CHECK_EQ(dst.edge, 1); CHECK_EQ(dst.coupling_dc, 1); CHECK_EQ(dst.probe_x10, 1);
     CHECK_EQ(dst.gen.on, 1); CHECK_EQ(dst.gen.fine, 1); CHECK_EQ(dst.trig_mode, 2);
-    t[18] = 3; fix_crc(t);
+    t[18] = 3; fix_crc(t, 158);
     CHECK_EQ(settings_unpack(t, SETTINGS_LEN, &dst, &cd, &z), 1);
     CHECK_EQ(dst.trig_mode, 0);
 }

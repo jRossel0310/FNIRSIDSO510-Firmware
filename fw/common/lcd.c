@@ -2,6 +2,7 @@
 #include "lcd.h"
 #include "board.h"
 #include "font8x16.h"
+#include "font8x8.h"
 
 #define XMC_BK1CTRL1   REG32(0xA0000000)
 #define XMC_BK1TMG1    REG32(0xA0000004)
@@ -75,6 +76,19 @@ int lcd_text(int col, int row, const char *s, uint16_t fg, uint16_t bg) {
         for (int y = 0; y < FONT_H; y++)
             for (int x = 0; x < FONT_W; x++)
                 LCD_DATA = (g[y] & (0x80 >> x)) ? fg : bg;
+    }
+    return col;
+}
+
+int lcd_text8(int col, int y, const char *s, uint16_t fg, uint16_t bg) {
+    for (; *s && col < LCD_W / FONT_W; s++, col++) {
+        unsigned ch = (uint8_t)*s;
+        if (ch < FONT_FIRST || ch > FONT_LAST) ch = '?';
+        const uint8_t *g = font8x8[ch - FONT_FIRST];
+        lcd_window(col * FONT_W, y, col * FONT_W + FONT_W - 1, y + FONT8_H - 1);
+        for (int r = 0; r < FONT8_H; r++)
+            for (int x = 0; x < FONT_W; x++)
+                LCD_DATA = (g[r] & (0x80 >> x)) ? fg : bg;
     }
     return col;
 }

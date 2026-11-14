@@ -3,6 +3,48 @@
 
 static kev_t K(int type, int key) { kev_t e; e.type = (uint8_t)type; e.key = (uint8_t)key; return e; }
 
+static void test_control_meas(void) {
+    scope_state_t s;
+    state_defaults(&s);
+    CHECK_EQ(s.meas_sel[0], MEAS_FREQ); CHECK_EQ(s.meas_sel[1], MEAS_DUTY_P); CHECK_EQ(s.meas_sel[2], MEAS_VPP);
+    CHECK_EQ(s.auto_off, 2);
+    CHECK_EQ(AUTO_OFF_NUM, 4); CHECK_EQ(MENU_ITEMS, 9);
+    CHECK_EQ(auto_off_min[0], 0); CHECK_EQ(auto_off_min[1], 5); CHECK_EQ(auto_off_min[2], 10); CHECK_EQ(auto_off_min[3], 30);
+    control_handle(&s, K(KEV_LONG, KEY_MODE));
+    for (int i = 0; i < 5; i++) control_handle(&s, K(KEV_SHORT, KEY_DOWN));
+    CHECK_EQ(s.menu_item, 5);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_MENU | CHG_MEAS);
+    CHECK_EQ(s.meas_sel[0], MEAS_PERIOD);
+    control_handle(&s, K(KEV_SHORT, KEY_WHEEL_L));
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_L)), CHG_MENU | CHG_MEAS);
+    CHECK_EQ(s.meas_sel[0], MEAS_AVG);                                /* wraps */
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_MENU | CHG_MEAS);
+    CHECK_EQ(s.meas_sel[0], MEAS_FREQ);
+    control_handle(&s, K(KEV_SHORT, KEY_DOWN));
+    control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R));
+    CHECK_EQ(s.meas_sel[1], MEAS_DUTY_P + 1); CHECK_EQ(s.meas_sel[0], MEAS_FREQ); CHECK_EQ(s.meas_sel[2], MEAS_VPP);
+    control_handle(&s, K(KEV_SHORT, KEY_DOWN));
+    control_handle(&s, K(KEV_SHORT, KEY_WHEEL_L));
+    CHECK_EQ(s.meas_sel[2], MEAS_VPP - 1); CHECK_EQ(s.meas_sel[1], MEAS_DUTY_P + 1);
+    control_handle(&s, K(KEV_SHORT, KEY_DOWN));
+    CHECK_EQ(s.menu_item, 8);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_MENU);
+    CHECK_EQ(s.auto_off, 3);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_MENU);
+    CHECK_EQ(s.auto_off, 0);
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_L)), CHG_MENU);
+    CHECK_EQ(s.auto_off, 3);
+    /* wheel press on row 6 closes the menu */
+    s.menu_item = 6;
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), CHG_SCREEN);
+    CHECK_EQ(s.menu_open, 0); CHECK_EQ(s.gen_open, 0);
+    /* row 4 still opens the generator page */
+    control_handle(&s, K(KEV_LONG, KEY_MODE));
+    for (int i = 0; i < 4; i++) control_handle(&s, K(KEV_SHORT, KEY_DOWN));
+    CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_PRESS)), CHG_SCREEN);
+    CHECK_EQ(s.gen_open, 1);
+}
+
 void test_control(void) {
     scope_state_t s;
     state_defaults(&s);
@@ -56,7 +98,7 @@ void test_control(void) {
     control_handle(&s, K(KEV_SHORT, KEY_UP));
     control_handle(&s, K(KEV_SHORT, KEY_UP));
     control_handle(&s, K(KEV_SHORT, KEY_UP));
-    CHECK_EQ(s.menu_item, 4);                              /* wraps */
+    CHECK_EQ(s.menu_item, 8);                              /* wraps */
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_MODE)), CHG_SCREEN);
     CHECK_EQ(s.menu_open, 0);
 
@@ -67,6 +109,7 @@ void test_control(void) {
     CHECK_EQ(control_handle(&s, K(KEV_LONG, KEY_AUTO)), ACT_AUTOZERO);
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_POWER)), 0);
     CHECK_EQ(control_handle(&s, K(KEV_LONG, KEY_POWER)), ACT_POWEROFF);
+    test_control_meas();
 }
 
 void test_control_gen(void) {
@@ -115,9 +158,13 @@ void test_control_gen(void) {
     CHECK_EQ(s.menu_open, 1);
     for (int i = 0; i < 4; i++) control_handle(&s, K(KEV_SHORT, KEY_DOWN));
     CHECK_EQ(s.menu_item, 4);
+    for (int i = 0; i < 4; i++) control_handle(&s, K(KEV_SHORT, KEY_DOWN));
+    CHECK_EQ(s.menu_item, 8);
     control_handle(&s, K(KEV_SHORT, KEY_DOWN));
-    CHECK_EQ(s.menu_item, 0);                                         /* wraps over 5 items */
+    CHECK_EQ(s.menu_item, 0);                                         /* wraps over 9 items */
     control_handle(&s, K(KEV_SHORT, KEY_UP));
+    CHECK_EQ(s.menu_item, 8);
+    for (int i = 0; i < 4; i++) control_handle(&s, K(KEV_SHORT, KEY_UP));
     CHECK_EQ(s.menu_item, 4);
     CHECK_EQ(control_handle(&s, K(KEV_SHORT, KEY_WHEEL_R)), CHG_SCREEN);
     CHECK_EQ(s.menu_open, 0); CHECK_EQ(s.gen_open, 1); CHECK_EQ(s.gen_item, 0);

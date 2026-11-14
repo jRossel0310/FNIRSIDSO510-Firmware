@@ -267,3 +267,12 @@ Scope app, probe on the generator output (50 kHz, 3.0 Vpp), checked over USB fra
 - Host measurement on the fake flash: rewriting the settings file in place costs 2 sector erases (data + root
   directory); the first version (`FA_CREATE_ALWAYS`) cost 7 including both FAT copies twice.
 - Parked: saved auto-zero tables override the factory calibration even if the factory page later changes.
+
+## Hardware checks for sub-project 5b (2026-11-14)
+
+- User: "everything looks good" — two-line bottom bar readable; all twelve measurements plausible on a 1 kHz 30 %
+  square; slot choices survive a power cycle; auto off at 5 min switches off on battery.
+- Parked: changing the offset in STOP/Single drops the held trace (save then says "No capture"); changing a slot
+  with no trace held leaves the old slot shown until the menu closes; menu box covers the bottom 4 px of the top
+  bar (a toast expiring under the open menu leaves a notch); no host test with a partial last period for the
+  statistics window.

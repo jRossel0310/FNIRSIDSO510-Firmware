@@ -120,7 +120,6 @@ void ui_draw_gen(const scope_state_t *s, uint32_t actual_mhz) {
 void ui_draw_bars(const scope_state_t *s, int uncal) {
     /* what the wheel | Up/Down adjust; padded to 16 columns (cols 12..27); col 28 is a gap, 29 the G marker, 31..33 the USB marker, 35 the uncalibrated mark */
     static const char *ctl_names[] = {"Time | Volts    ", "TrigPos | Offset", "TrigPos | Level ", "Gen Freq | Amp  "};
-    static const char *trig_names[] = {"Auto  ", "Normal", "Single"};
     char b[16];
     lcd_fill(0, 0, 12 * 8, 16, C_BLACK);
     int c = lcd_text(0, 0, " ", C_WHITE, C_BLACK);
@@ -143,44 +142,63 @@ void ui_draw_bars(const scope_state_t *s, int uncal) {
     } else lcd_text(12, 0, ctl_names[s->ctl], C_CYAN, C_BLACK);
     lcd_text(35, 0, uncal ? "!" : " ", C_BLACK, uncal ? C_RED : C_BLACK);   /* no factory calibration */
 
-    lcd_fill(0, 224, 21 * 8, 16, C_BLACK);
-    c = lcd_text(0, 14, " ", C_WHITE, C_BLACK);
-    c = lcd_text(c, 14, fmt_si(b, (float)vdiv_mv[s->vdiv] * 1e-3f * (s->probe_x10 ? 10.0f : 1.0f), "V", 1),
-                 C_YELLOW, C_BLACK);
-    lcd_text(7, 14, trig_names[s->trig_mode], C_WHITE, C_BLACK);
-    lcd_text(14, 14, s->probe_x10 ? "x10" : "x1 ", C_WHITE, C_BLACK);
-    lcd_text(17, 14, s->coupling_dc ? "DC" : "AC", C_WHITE, C_BLACK);
-    lcd_text(19, 14, s->edge ? "F" : "R", C_CYAN, C_BLACK);
+    /* bottom bar line 1: pixel rows 224..231 (line 2, rows 232..239, belongs to ui_draw_meas) */
+    static const char *trig8[] = {"Auto", "Normal", "Single"};
+    lcd_fill(0, 224, LCD_W, 8, C_BLACK);
+    lcd_text8(0, 224, fmt_si(b, (float)vdiv_mv[s->vdiv] * 1e-3f * (s->probe_x10 ? 10.0f : 1.0f), "V", 1),
+              C_YELLOW, C_BLACK);
+    lcd_text8(7, 224, trig8[s->trig_mode], C_WHITE, C_BLACK);
+    lcd_text8(15, 224, s->probe_x10 ? "x10" : "x1", C_WHITE, C_BLACK);
+    lcd_text8(20, 224, s->coupling_dc ? "DC" : "AC", C_WHITE, C_BLACK);
+    lcd_text8(24, 224, s->edge ? "Falling" : "Rising", C_CYAN, C_BLACK);
 }
 
+/* Bottom bar line 2: the three selected measurements, 13 columns each (12 characters at most). */
 void ui_draw_meas(const scope_state_t *s, const meas_t *m) {
-    char b[16];
-    lcd_fill(21 * 8, 224, LCD_W - 21 * 8, 16, C_BLACK);
-    if (!m->valid) { lcd_text(21, 14, "---", C_GRAY, C_BLACK); }
-    else {
-        int c = lcd_text(21, 14, fmt_si(b, m->freq_hz, "Hz", 0), C_WHITE, C_BLACK);
-        c = lcd_text(c + 1, 14, fmt_u(b, (uint32_t)(m->duty_pct + 0.5f), 2), C_WHITE, C_BLACK);
-        lcd_text(c, 14, "%", C_WHITE, C_BLACK);
+    char b[16], t[12], u[20];
+    float vpc = units_volts_per_code(s->vdiv, s->probe_x10);
+    float zero = (float)(ADC_CENTER + s->offset);
+    lcd_fill(0, 232, LCD_W, 8, C_BLACK);
+    for (int i = 0; i < 3; i++) {
+        int kind = s->meas_sel[i], unit, k = 0, n = 0;
+        float v;
+        const char *p = meas_tag(kind);
+        while (*p && k < 6) t[k++] = *p++;
+        t[k++] = ' '; t[k] = 0;
+        int ok = meas_value(m, kind, vpc, zero, &v, &unit);
+        if (!ok) p = "---";
+        else if (unit == MEAS_U_PCT) {
+            p = fmt_u(b, (uint32_t)(v + 0.5f), 1);
+            while (*p) u[n++] = *p++;
+            u[n++] = '%'; u[n] = 0; p = u; n = 0;
+        } else p = fmt_si(b, v, unit == MEAS_U_HZ ? "Hz" : unit == MEAS_U_S ? "s" : "V", 0);
+        while (*p && n < 19) u[n++] = *p++;
+        u[n] = 0;
+        if (n > 12 - k) u[12 - k] = 0;          /* a slot is 12 characters at most */
+        int c = lcd_text8(13 * i, 232, t, C_GRAY, C_BLACK);
+        lcd_text8(c, 232, u, ok ? C_WHITE : C_GRAY, C_BLACK);
     }
-    float vpp = m->vpp_codes * units_volts_per_code(s->vdiv, s->probe_x10);
-    lcd_text(33, 14, fmt_si(b, vpp, "V", 0), C_YELLOW, C_BLACK);
 }
 
 void ui_draw_menu(const scope_state_t *s) {
-    static const char *labels[MENU_ITEMS] = {"Coupling", "Probe", "Trigger", "Edge", "Generator"};
+    static const char *labels[MENU_ITEMS] = {"Coupling", "Probe", "Trigger", "Edge", "Generator",
+                                             "Meas 1", "Meas 2", "Meas 3", "Auto off"};
+    static const char *off_names[AUTO_OFF_NUM] = {"Off", "5 min", "10 min", "30 min"};
     static const char *trig_names[] = {"Auto", "Normal", "Single"};
     const char *vals[MENU_ITEMS] = {
         s->coupling_dc ? "DC" : "AC", s->probe_x10 ? "x10" : "x1",
         trig_names[s->trig_mode], s->edge ? "Falling" : "Rising", "open >",
+        meas_name(s->meas_sel[0]), meas_name(s->meas_sel[1]), meas_name(s->meas_sel[2]),
+        off_names[s->auto_off < AUTO_OFF_NUM ? s->auto_off : 0],
     };
-    lcd_fill(8 * 8 - 4, 3 * 16 - 4, 24 * 8 + 8, 8 * 16 + 8, C_NAVY);
-    lcd_text(8, 3, " SETTINGS   Mode=close  ", C_BLACK, C_CYAN);
+    lcd_fill(6 * 8 - 4, 1 * 16 - 4, 28 * 8 + 8, 11 * 16 + 8, C_NAVY);
+    lcd_text(6, 1, " SETTINGS        Mode=close ", C_BLACK, C_CYAN);
     for (int i = 0; i < MENU_ITEMS; i++) {
         uint16_t bg = i == s->menu_item ? C_GRAY : C_NAVY;
-        lcd_fill(8 * 8, (5 + i) * 16, 24 * 8, 16, bg);
-        lcd_text(9, 5 + i, labels[i], C_WHITE, bg);
-        lcd_text(20, 5 + i, "<       >", C_CYAN, bg);
-        lcd_text(21, 5 + i, vals[i], C_YELLOW, bg);
+        lcd_fill(6 * 8, (3 + i) * 16, 28 * 8, 16, bg);
+        lcd_text(7, 3 + i, labels[i], C_WHITE, bg);
+        lcd_text(19, 3 + i, "<           >", C_CYAN, bg);
+        lcd_text(20, 3 + i, vals[i], C_YELLOW, bg);
     }
 }
 
