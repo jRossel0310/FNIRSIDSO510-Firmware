@@ -28,23 +28,21 @@ int main(void) {
     line(" jedec      ", spiflash_jedec_id() == 0x856017u, spiflash_jedec_id());
     int ok = spiflash_read(TEST_ADDR, backup, FLASH_SECTOR) == 0;
     line(" backup read", ok, 0);
-    spiflash_read(SYS_VOL_BASE, sys0, sizeof sys0);
+    int sys0_ok = spiflash_read(SYS_VOL_BASE, sys0, sizeof sys0) == 0;
     if (ok) {
         for (uint32_t i = 0; i < FLASH_SECTOR; i++) pat[i] = (uint8_t)(i * 7 + 3);
         uint32_t t0 = millis();
         int r = spiflash_write_sector(TEST_ADDR, pat);
         uint32_t dt = millis() - t0;
         line(" write ms   ", r == 0, dt);
-        spiflash_read(TEST_ADDR, rd, FLASH_SECTOR);
-        int same = 1;
+        int same = spiflash_read(TEST_ADDR, rd, FLASH_SECTOR) == 0;
         for (uint32_t i = 0; i < FLASH_SECTOR; i++) if (rd[i] != pat[i]) same = 0;
         line(" readback   ", same, 0);
         line(" guard sys  ", spiflash_write_sector(SYS_VOL_BASE, pat) == -2, 0);
         line(" guard erase", spiflash_erase_sector(SYS_VOL_BASE) == -2, 0);
         r = spiflash_write_sector(TEST_ADDR, backup);
         line(" restore    ", r == 0, (uint32_t)r);
-        spiflash_read(SYS_VOL_BASE, sys1, sizeof sys1);
-        int sys_same = 1;
+        int sys_same = sys0_ok && spiflash_read(SYS_VOL_BASE, sys1, sizeof sys1) == 0;
         for (uint32_t i = 0; i < sizeof sys0; i++) if (sys0[i] != sys1[i]) sys_same = 0;
         line(" sys intact ", sys_same, 0);
     }
@@ -53,7 +51,7 @@ int main(void) {
         if (keys_read() & KEY_BIT(KEY_POWER)) {
             uint32_t t0 = millis();
             while (keys_read() & KEY_BIT(KEY_POWER))
-                if (millis() - t0 > 1000) { backlight(0); power_off(); for (;;) { } }
+                if (millis() - t0 > 1000) { backlight(0); power_off(); for (;;) WDT_CMD = 0xAAAA; }
         }
         WDT_CMD = 0xAAAA;
         delay_ms(20);
