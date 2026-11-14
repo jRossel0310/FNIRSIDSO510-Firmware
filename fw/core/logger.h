@@ -17,8 +17,11 @@ void logger_push(logger_t *l, bytefifo_t *f, const uint8_t *s, uint32_t n);
 /* n samples were lost before reaching the logger (DMA ring overrun). */
 void logger_lost(logger_t *l, uint32_t n);
 
-/* Which DMA ring halves to take, oldest first: 0 = first half, 1 = second half, -1 = none.
-   lost = samples overwritten before they could be taken. flags: bit0 HT, bit1 TC (as read and
-   cleared); remaining = the DMA's transfers still to go in this pass; n = ring length (even). */
+/* DMA ring of n samples (n even) as two halves. `completed` = total half-buffer completions since the
+   ring started (from the DMA interrupt: completion k, counting from 0, fills half k % 2). `*consumed` =
+   completions already handled (start at 0). Returns the newest completed half to take (first = 0 or 1,
+   -1 if nothing new) and how many samples were overwritten before they could be taken; advances
+   *consumed to completed. Only the newest half is safe: with two or more pending, the DMA is already
+   overwriting the older one. second is always -1 (kept for the caller's loop). */
 typedef struct { int first, second; uint32_t lost; } ring_pick_t;
-ring_pick_t logger_pick(int flags, uint32_t remaining, uint32_t n);
+ring_pick_t logger_pick(uint32_t completed, uint32_t *consumed, uint32_t n);

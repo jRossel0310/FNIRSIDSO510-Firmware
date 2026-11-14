@@ -25,14 +25,12 @@ void logger_push(logger_t *l, bytefifo_t *f, const uint8_t *s, uint32_t n) {
     }
 }
 
-ring_pick_t logger_pick(int flags, uint32_t remaining, uint32_t n) {
+ring_pick_t logger_pick(uint32_t completed, uint32_t *consumed, uint32_t n) {
     ring_pick_t r = {-1, -1, 0};
-    int ht = flags & 1, tc = (flags >> 1) & 1;
-    int in_first = remaining > n / 2;                  /* DMA now writing the first half */
-    if (ht && tc) {                                    /* late: one half is being overwritten */
-        r.first = in_first ? 1 : 0;
-        r.lost = n / 2;
-    } else if (ht) r.first = 0;
-    else if (tc) r.first = 1;
+    uint32_t pending = completed - *consumed;          /* wrap-safe */
+    if (pending == 0) return r;
+    r.first = (int)((completed - 1) % 2);              /* newest completed half */
+    r.lost = (pending - 1) * (n / 2);                  /* all older completions were overwritten */
+    *consumed = completed;
     return r;
 }
