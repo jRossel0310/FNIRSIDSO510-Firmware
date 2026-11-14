@@ -1,8 +1,10 @@
 #include "capsave.h"
-#include "ff.h"
+#include "fsobj.h"
 
-static FATFS fs;
-static FIL fil;
+FATFS g_fs;
+FIL g_fil;
+#define fs g_fs
+#define fil g_fil
 static DIR dir;
 static FILINFO fno;
 #define CHUNK 4096                                      /* = sector size: whole-sector f_writes bypass the window */

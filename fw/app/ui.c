@@ -94,14 +94,14 @@ void ui_draw_gen(const scope_state_t *s, uint32_t actual_mhz) {
     if (g->fine) { v[2][k++] = ' '; v[2][k++] = 'f'; v[2][k++] = 'i'; v[2][k++] = 'n'; v[2][k++] = 'e'; }
     v[2][k] = 0;
     fmt_dv(v[3], g->amp_dv);
-    fmt_dv(v[4], g->offset_dv);
+    fmt_dv(v[4], g->wave == GEN_DC ? g->dc_dv : g->offset_dv);
     p = fmt_u(b, g->duty_pct, 1);        for (k = 0; p[k]; k++) v[5][k] = p[k]; v[5][k++] = '%'; v[5][k] = 0;
 
     lcd_fill(6 * 8 - 4, 2 * 16 - 4, 28 * 8 + 8, 11 * 16 + 8, C_NAVY);
     lcd_text(6, 2, " GENERATOR      Mode=close  ", C_BLACK, C_CYAN);
     for (int i = 0; i < GEN_ROWS; i++) {
         uint16_t bg = i == s->gen_item ? C_GRAY : C_NAVY;
-        int dim = (i == 5 && g->wave != GEN_SQUARE) || (i == 3 && g->wave == GEN_DC);   /* row has no effect */
+        int dim = (i == 5 && g->wave != GEN_SQUARE) || ((i == 2 || i == 3) && g->wave == GEN_DC);   /* row has no effect */
         lcd_fill(6 * 8, (4 + i) * 16, 28 * 8, 16, bg);
         lcd_text(7, 4 + i, labels[i], C_WHITE, bg);
         lcd_text(18, 4 + i, "<             >", C_CYAN, bg);
@@ -131,10 +131,11 @@ void ui_draw_bars(const scope_state_t *s, int uncal) {
         int k = 0;
         const char *p = "Gen ";
         while (*p) l[k++] = *p++;
-        p = fmt_si(b, (float)s->gen.freq_hz, "Hz", 1);
+        if (s->gen.wave == GEN_DC) p = "DC";
+        else p = fmt_si(b, (float)s->gen.freq_hz, "Hz", 1);
         while (*p && k < 11) l[k++] = *p++;                 /* at most 7 characters: "10.1kHz" */
-        l[k++] = s->gen.fine ? '~' : ' ';
-        p = fmt_dv(t, s->gen.amp_dv);
+        l[k++] = s->gen.fine && s->gen.wave != GEN_DC ? '~' : ' ';
+        p = fmt_dv(t, s->gen.wave == GEN_DC ? s->gen.dc_dv : s->gen.amp_dv);
         while (*p) l[k++] = *p++;
         while (k < 16) l[k++] = ' ';
         l[k] = 0;

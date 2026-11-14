@@ -9,7 +9,7 @@ void test_gen(void) {
     gen_cfg_t g;
     gen_defaults(&g);
     CHECK_EQ(g.on, 1); CHECK_EQ(g.wave, GEN_SINE); CHECK_EQ(g.freq_hz, 1000);
-    CHECK_EQ(g.amp_dv, 20); CHECK_EQ(g.offset_dv, 15); CHECK_EQ(g.duty_pct, 50); CHECK_EQ(g.fine, 0);
+    CHECK_EQ(g.amp_dv, 20); CHECK_EQ(g.offset_dv, 15); CHECK_EQ(g.dc_dv, 15); CHECK_EQ(g.duty_pct, 50); CHECK_EQ(g.fine, 0);
 
     /* volts -> DAC code: 4095 = 3100 mV */
     CHECK_EQ(gen_code_mv(0), 0); CHECK_EQ(gen_code_mv(3100), 4095); CHECK_EQ(gen_code_mv(1550), 2048);
@@ -27,9 +27,12 @@ void test_gen(void) {
     g.freq_hz = 0; gen_clamp(&g);                    CHECK_EQ(g.freq_hz, 1);
     g.freq_hz = 99999; gen_clamp(&g);                CHECK_EQ(g.freq_hz, 50000);
     g.wave = 200; gen_clamp(&g);                     CHECK_EQ(g.wave, GEN_SINE);
-    gen_defaults(&g); g.wave = GEN_DC; g.amp_dv = 30; g.offset_dv = 31; gen_clamp(&g);
-    CHECK_EQ(g.offset_dv, 31);                        /* DC: level 0..3.1 V regardless of amplitude */
-    g.offset_dv = 40; gen_clamp(&g);                 CHECK_EQ(g.offset_dv, 31);
+    gen_defaults(&g); g.wave = GEN_DC; g.amp_dv = 30; g.offset_dv = 31; g.dc_dv = 40; gen_clamp(&g);
+    CHECK_EQ(g.offset_dv, 16);                        /* centre clamped like any wave */
+    CHECK_EQ(g.dc_dv, 31);                            /* DC level 0..3.1 V on its own */
+    gen_defaults(&g); g.wave = GEN_DC; g.dc_dv = 31; gen_clamp(&g);
+    g.wave = GEN_HALF; gen_clamp(&g); g.wave = GEN_DC; gen_clamp(&g);
+    CHECK_EQ(g.dc_dv, 31); CHECK_EQ(g.offset_dv, 15);
 
     /* frequency stepping: coarse 1-2-5, fine = 1 % of the decade */
     CHECK_EQ(gen_freq_step(1000, 1, 0), 2000); CHECK_EQ(gen_freq_step(2000, 1, 0), 5000);
@@ -112,8 +115,8 @@ void test_gen(void) {
     CHECK_EQ(tab[0], lo); CHECK(near(tab[50], hi, 1)); CHECK(near(tab[25], mid, 1)); CHECK(near(tab[75], mid, 1));
     g.wave = GEN_SAW; gen_table(&g, &q, tab);
     CHECK_EQ(tab[0], lo); CHECK(near(tab[50], mid, 1)); CHECK(tab[99] > tab[98]); CHECK(near(tab[99], hi, 30));
-    g.wave = GEN_DC; gen_table(&g, &q, tab);
-    CHECK_EQ(tab[0], mid); CHECK_EQ(tab[57], mid); CHECK_EQ(tab[99], mid);
+    g.wave = GEN_DC; g.dc_dv = 7; g.offset_dv = 15; gen_table(&g, &q, tab);
+    for (int i = 0; i < 100; i++) CHECK_EQ(tab[i], gen_code_mv(700));
     g.wave = GEN_HALF; gen_table(&g, &q, tab);
     CHECK_EQ(tab[0], lo); CHECK(near(tab[25], hi, 2)); CHECK_EQ(tab[50], lo); CHECK_EQ(tab[75], lo); CHECK_EQ(tab[99], lo);
     g.wave = GEN_FULL; gen_table(&g, &q, tab);         /* one hump per period */

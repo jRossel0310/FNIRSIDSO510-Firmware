@@ -21,7 +21,8 @@ typedef struct {
     uint8_t fine;                  /* frequency wheel: 0 = 1-2-5 steps, 1 = 1 % of the decade */
     uint8_t duty_pct;              /* square only, 1..99 */
     uint8_t amp_dv;                /* peak-to-peak in 0.1 V, 1..30 */
-    uint8_t offset_dv;             /* centre (DC: level) in 0.1 V */
+    uint8_t offset_dv;             /* centre in 0.1 V */
+    uint8_t dc_dv;                 /* DC waveform: level in 0.1 V, 0..31 */
     uint32_t freq_hz;              /* 1..50000 */
 } gen_cfg_t;
 
