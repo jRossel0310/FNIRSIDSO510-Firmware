@@ -85,7 +85,7 @@ plt.plot([float(r[0]) for r in rows], [float(r[1]) for r in rows])
 plt.xlabel("time (s)"); plt.ylabel("volts"); plt.show()
 ```
 
-(`matplotlib` is not in `requirements.txt`; install it separately.)
+For single captures, `plot_csv.py` in the repository root does this with axis units and trigger markers.
 
 ## Tests
 

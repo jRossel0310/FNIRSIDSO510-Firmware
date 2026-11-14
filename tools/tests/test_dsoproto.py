@@ -32,7 +32,7 @@ class TestVectors(unittest.TestCase):
     def test_info(self):
         p = self.one("info.bin")
         self.assertIsInstance(p, dp.Info)
-        self.assertEqual(p.fields["fw"], "0.3.0")
+        self.assertEqual(p.fields["fw"], "1.0.0")
         self.assertEqual(p.fields["mode"], "idle")
         self.assertEqual(p.fields["rates"], "1000,2000,5000,10000,20000,50000,100000,200000,500000")
 
@@ -136,27 +136,27 @@ class TestFaults(unittest.TestCase):
 class TestCsv(unittest.TestCase):
     def test_drop_before_meta_writes_nothing(self):
         out = io.StringIO()
-        w = dp.LogCsvWriter(out, "0.3.0")
+        w = dp.LogCsvWriter(out, "1.0.0")
         w.drop(dp.Drop(5, 3))
         self.assertEqual(out.getvalue(), "")
         w.meta(dp.Meta(rate_hz=1000, vdiv_mv=1000, coupling_dc=1, probe_x10=0, zero_code=128, offset_pwm=2033))
-        self.assertTrue(out.getvalue().startswith("# DSO-510 custom firmware 0.3.0 (PC log)\n"))
+        self.assertTrue(out.getvalue().startswith("# DSO-510 custom firmware 1.0.0 (PC log)\n"))
 
     def test_frame_csv_matches_firmware(self):
         p = dp.Decoder().feed(vec("frame.bin"))[0]
-        text = dp.frame_csv_text(p.meta, p.samples, "0.3.0")
+        text = dp.frame_csv_text(p.meta, p.samples, "1.0.0")
         self.assertEqual(text, vec("frame.csv").decode("ascii"))
 
     def test_log_csv(self):
         m = dp.Meta(rate_hz=1000, vdiv_mv=1000, coupling_dc=1, probe_x10=0, zero_code=128, offset_pwm=2033)
         out = io.StringIO()
-        w = dp.LogCsvWriter(out, "0.3.0")
+        w = dp.LogCsvWriter(out, "1.0.0")
         w.meta(m)
         w.log(dp.Log(0, bytes([128, 153])))
         w.drop(dp.Drop(5, 3))
         w.log(dp.Log(5, bytes([103])))
         self.assertEqual(out.getvalue(),
-                         "# DSO-510 custom firmware 0.3.0 (PC log)\n"
+                         "# DSO-510 custom firmware 1.0.0 (PC log)\n"
                          "# sample_rate_hz=1000\n"
                          "# volts_per_div=1.0000\n"
                          "# coupling=DC\n"

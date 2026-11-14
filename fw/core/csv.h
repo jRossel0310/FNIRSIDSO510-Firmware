@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-#define FW_VERSION "0.3.0"
+#define FW_VERSION "1.0.0"
 #define CSV_ROW_MAX 40          /* longest row incl. '\n' */
 
 typedef struct {

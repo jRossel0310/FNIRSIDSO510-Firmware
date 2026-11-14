@@ -4,3 +4,8 @@ fw/**/*.elf
 fw/**/*.map
 fw/build/
 tests/build/
+sim/build/
+# FNIRSI's own material stays local (not redistributed): stock firmware, its decompilation, drive dumps
+/APP_DSO-510_V*.bin
+re/
+dumps/
